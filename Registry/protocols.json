@@ -1,0 +1,29 @@
+{
+  "version": "1.0",
+  "networks": {
+    "algorand-mainnet": {
+      "TinymanV2": {
+        "type": "amm",
+        "validator_app_id": 1002541853,
+        "docs": "https://docs.tinyman.org/"
+      },
+      "Pact": {
+        "type": "amm",
+        "docs": "https://www.pact.fi/"
+      },
+      "FolksFinance": {
+        "type": "lending",
+        "docs": "https://docs.folks.finance/developer/contracts"
+      }
+    },
+    "algorand-testnet": {
+      "TinymanV2": {
+        "type": "amm",
+        "validator_app_id": 148607000,
+        "docs": "https://docs.tinyman.org/"
+      },
+      "Pact": { "type": "amm", "docs": "https://www.pact.fi/" },
+      "FolksFinance": { "type": "lending", "docs": "https://docs.folks.finance/developer/contracts" }
+    }
+  }
+}
