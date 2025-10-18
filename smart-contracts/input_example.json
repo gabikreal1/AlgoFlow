@@ -1,0 +1,90 @@
+{
+  "contract_name": "MVPStrategy_Auto",
+  "network": "algorand-mainnet",
+  "owner_address": "REPLACE_ADDR",
+  "version": "1.0",
+  "resolved_resources": {
+    "assets": {
+      "USDC": 31566704,
+      "ALGO": 0
+    },
+    "amm": {
+      "Pact": {}
+    },
+    "pools": {
+      "Pact": {
+        "ALGO/USDC": {
+          "pool_app_id": 2757488616,
+          "pool_address": null,
+          "assets": {
+            "base": "ALGO",
+            "quote": "USDC"
+          }
+        }
+      }
+    },
+    "lending": {
+      "FolksFinance": {}
+    },
+    "oracles": {}
+  },
+  "logic": [
+    {
+      "block_id": "b1",
+      "actions": [
+        {
+          "protocol": "Pact",
+          "op": "SWAP",
+          "args": {
+            "asset_in": 0,
+            "asset_out": 31566704,
+            "amount_micro": 100000000,
+            "amount_all": false
+          }
+        },
+        {
+          "protocol": "Pact",
+          "op": "PROVIDE_LIQUIDITY",
+          "args": {
+            "pool_app_id": 2757488616,
+            "slippage_bps": 50
+          }
+        }
+      ],
+      "condition": {
+        "type": "NONE",
+        "expr": null,
+        "oracle_ref": null
+      }
+    },
+    {
+        "block_id": "b2",
+        "actions": [
+            {
+            "protocol": "Pact",
+            "op": "WITHDRAW_LIQUIDITY",
+            "args": {
+                "pool_app_id": 2757488616,
+                "liquidity_asset_amount_all": true,
+                "min_asset_out_bps": 9500
+            }
+            }
+        ],
+        "condition": {
+            "type": "PRICE_THRESHOLD",
+            "expr": "ALGO/USDC > 1.5",
+      "oracle_ref": 21321231231
+        }
+    }
+  ],
+  "schemas": {
+    "global_state": {
+      "uints": 16,
+      "bytes": 16
+    },
+    "local_state": {
+      "uints": 8,
+      "bytes": 8
+    }
+  }
+}
