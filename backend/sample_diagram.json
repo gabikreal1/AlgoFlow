@@ -1,0 +1,43 @@
+{
+  "strategy_name": "Swap ALGO to USDC and LP",
+  "network": "algorand",
+  "version": "1.0",
+  "stages": {
+    "entry": [
+      {
+        "id": "block-entry-1",
+        "type": "BLOCK",
+        "desc": "Swap 100000 microAlgos into USDC and supply liquidity",
+        "condition": { "type": "NONE", "params": {} },
+        "actions": [
+          {
+            "protocol": "Tinyman",
+            "op": "SWAP",
+            "params": {
+              "from": "ALGO",
+              "to": "USDC",
+              "amount_in": 100000,
+              "amount_unit": "micro",
+              "slippage_bps": 100
+            }
+          },
+          {
+            "protocol": "Tinyman",
+            "op": "PROVIDE_LIQUIDITY",
+            "params": {
+              "token_a": "USDC",
+              "token_b": "USDT",
+              "amount_a": 0,
+              "amount_b": 0,
+              "slippage_bps": 100,
+              "pool": "USDC/USDT"
+            }
+          }
+        ]
+      }
+    ],
+    "manage": [],
+    "exit": []
+  },
+  "connections": []
+}

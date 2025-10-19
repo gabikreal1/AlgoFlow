@@ -1,0 +1,55 @@
+{
+  "strategy_name": "ALGO/USDC LP Strategy",
+  "network": "Algorand",
+  "version": "1.0",
+  "stages": {
+    "entry": [
+      {
+        "id": "swap-usdc-to-algo",
+        "type": "BLOCK",
+        "desc": "Swap half USDC to ALGO",
+        "actions": [
+          {
+            "protocol": "Tinyman",
+            "op": "SWAP",
+            "params": {
+              "from": "USDC",
+              "to": "ALGO",
+              "amount_in": 50,
+              "amount_unit": "human"
+            }
+          }
+        ],
+        "condition": {
+          "type": "NONE"
+        }
+      },
+      {
+        "id": "add-liquidity",
+        "type": "BLOCK",
+        "desc": "Provide liquidity to ALGO/USDC pool",
+        "actions": [
+          {
+            "protocol": "Tinyman",
+            "op": "PROVIDE_LIQUIDITY",
+            "params": {
+              "pool": "ALGO/USDC",
+              "slippage_bps": 50
+            }
+          }
+        ],
+        "condition": {
+          "type": "NONE"
+        }
+      }
+    ],
+    "manage": [],
+    "exit": []
+  },
+  "connections": [
+    {
+      "from": "swap-usdc-to-algo",
+      "to": "add-liquidity"
+    }
+  ]
+}

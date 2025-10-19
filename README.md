@@ -4,11 +4,19 @@
 
 AlgoFlow is an end-to-end platform that enables users to create, manage, and automate complex DeFi workflows through an intuitive builder interface or natural language chat. It combines visual workflow design, AI-powered intent interpretation, and on-chain execution via smart contracts.
 
+> **🆕 NEW FEATURES**: 
+> - **JSON Export/Import**: Save and load strategies as parser-compatible JSON
+> - **AI Chat Integration**: Build strategies using natural language
+> - **Real-time Updates**: Chat modifies visual flow diagrams instantly
+> 
+> See [QUICK_REFERENCE.md](QUICK_REFERENCE.md) for usage guide.
+
 ---
 
 ## 📋 Table of Contents
 
 - [Overview](#overview)
+- [New Features](#new-features)
 - [Architecture](#architecture)
 - [Key Features](#key-features)
 - [System Components](#system-components)
@@ -17,6 +25,36 @@ AlgoFlow is an end-to-end platform that enables users to create, manage, and aut
 - [Project Structure](#project-structure)
 - [Contributing](#contributing)
 - [License](#license)
+
+---
+
+## 🆕 New Features
+
+### JSON Export/Import
+- **Export** visual strategies to parser-compatible JSON
+- **Import** JSON to reconstruct visual flow diagrams
+- Compatible with backend parser for smart contract deployment
+- [Learn more →](AGENT_INTEGRATION.md#json-exportimport)
+
+### AI Agent Integration
+- **Chat interface** for building strategies in natural language
+- **Real-time updates** to visual flow diagram
+- **Context-aware** - modifies existing strategies or creates new ones
+- [Learn more →](AGENT_INTEGRATION.md#ai-agent-integration)
+
+### Quick Start
+```bash
+# 1. Set up environment
+echo "OPENAI_API_KEY=your-key" > .env
+
+# 2. Start frontend
+cd front && npm run dev
+
+# 3. Open chat and type:
+"Swap 100 USDC to ALGO on Tinyman"
+```
+
+See [QUICK_REFERENCE.md](QUICK_REFERENCE.md) for more examples.
 
 ---
 

@@ -60,16 +60,18 @@ export const defaultStrategyTemplates: StrategyBlockTemplate[] = [
     backgroundColor: "#6366f1",
     description: "Execute a swap on the preferred pool.",
     fields: [
-      { key: "fromAsset", label: "From", type: "text", placeholder: "ALGO" },
-      { key: "toAsset", label: "To", type: "text", placeholder: "gALGO" },
+      { key: "from_token", label: "From Token", type: "text", placeholder: "ALGO" },
+      { key: "to_token", label: "To Token", type: "text", placeholder: "gALGO" },
       {
-        key: "amountPct",
-        label: "Amount %",
-        type: "number",
-        helperText: "Share of available balance to route.",
+        key: "amount", label: "Amount", type: "number", helperText: "Amount to swap." },
+      {
+        key: "amount_unit", label: "Unit", type: "select", options: [
+          { label: "Human", value: "human" },
+          { label: "Atomic", value: "atomic" },
+        ]
       },
     ],
-    values: { fromAsset: "ALGO", toAsset: "gALGO", amountPct: 50 },
+    values: { from_token: "ALGO", to_token: "gALGO", amount: 50, amount_unit: "human" },
     inputs: [{ id: "swap-in", label: "Input", side: "left", position: 0.5 }],
     outputs: [
       { id: "swap-success", label: "Success", side: "right", position: 0.35 },
@@ -86,19 +88,17 @@ export const defaultStrategyTemplates: StrategyBlockTemplate[] = [
     description: "Deposit into the vault and stake LP tokens.",
     fields: [
       {
-        key: "pool",
-        label: "Pool",
-        type: "select",
-        options: [
-          { label: "ALGO/USDC", value: "algo-usdc" },
-          { label: "ALGO/gALGO", value: "algo-galgo" },
-          { label: "USDC/USDT", value: "usdc-usdt" },
-        ],
-      },
-      { key: "slippage", label: "Slippage %", type: "number" },
-      { key: "lockup", label: "Lock-up (days)", type: "number" },
+        key: "token_a", label: "Token A", type: "text", placeholder: "ALGO" },
+      {
+        key: "token_b", label: "Token B", type: "text", placeholder: "USDC" },
+      {
+        key: "amount_a", label: "Amount A", type: "number" },
+      {
+        key: "amount_b", label: "Amount B", type: "number" },
+      {
+        key: "slippage_bps", label: "Slippage (bps)", type: "number", helperText: "Basis points (1% = 100bps)" },
     ],
-    values: { pool: "algo-galgo", slippage: 1, lockup: 30 },
+    values: { token_a: "ALGO", token_b: "USDC", amount_a: 0, amount_b: 0, slippage_bps: 50 },
     inputs: [
       { id: "stake-in", label: "Assets", side: "left", position: 0.45 },
       { id: "stake-topup", label: "Top-up", side: "left", position: 0.75 },

@@ -8,6 +8,7 @@ import ReactFlow, {
 	ConnectionMode,
 	Controls,
 	Edge,
+	EdgeChange,
 	MarkerType,
 	MiniMap,
 	ReactFlowProvider,
@@ -18,6 +19,7 @@ import ReactFlow, {
 	useNodesState,
 	useReactFlow,
 	Node,
+	NodeChange,
 } from "reactflow"
 import "reactflow/dist/style.css"
 
@@ -35,8 +37,11 @@ import {
 	strategyPaletteTemplates,
 } from "@/components/strategy-templates"
 
+type InitialBlockInput = StrategyBlockTemplate[] | Node<ScratchBlockNodeData>[]
+type FlowNode = Node<ScratchBlockNodeData>
+
 export interface DeFiStrategyFlowProps {
-	initialBlocks?: StrategyBlockTemplate[]
+	initialBlocks?: InitialBlockInput
 	initialEdges?: Edge[]
 	onNodesUpdate?: (nodes: Node<ScratchBlockNodeData>[]) => void
 	onEdgesUpdate?: (edges: Edge[]) => void
@@ -68,6 +73,38 @@ const defaultEdgeOptions = {
 	},
 }
 
+const signatureForNodes = (nodes: FlowNode[]) =>
+	JSON.stringify(
+		nodes.map((node) => ({
+			id: node.id,
+			position: node.position,
+			data: {
+				title: node.data.title,
+				typeLabel: node.data.typeLabel,
+				description: node.data.description,
+				values: node.data.values,
+				variant: node.data.variant,
+				accentColor: node.data.accentColor,
+				backgroundColor: node.data.backgroundColor,
+			},
+		})),
+	)
+
+const signatureForEdges = (edges: Edge[]) =>
+	JSON.stringify(
+		edges.map((edge) => ({
+			id: edge.id,
+			source: edge.source,
+			target: edge.target,
+			sourceHandle: edge.sourceHandle,
+			targetHandle: edge.targetHandle,
+			type: edge.type,
+		})),
+	)
+
+const isFlowNodeArray = (items: InitialBlockInput): items is Node<ScratchBlockNodeData>[] =>
+	items.length > 0 && "type" in items[0] && "data" in items[0]
+
 export function DeFiStrategyFlow({
 	initialBlocks,
 	initialEdges,
@@ -87,8 +124,6 @@ export function DeFiStrategyFlow({
 }
 
 interface StrategyFlowCanvasProps extends DeFiStrategyFlowProps {}
-
-type FlowNode = Node<ScratchBlockNodeData>
 
 const generateEdgeId = () =>
 	typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
@@ -241,6 +276,8 @@ function StrategyFlowCanvas({
 	const containerRef = React.useRef<HTMLDivElement | null>(null)
 	const hasFitView = React.useRef(false)
 
+	const nodesSignatureRef = React.useRef<string>("")
+	const edgesSignatureRef = React.useRef<string>("")
 	const [nodes, setNodes, onNodesChangeInternal] = useNodesState<ScratchBlockNodeData>([])
 	const [edges, setEdges, onEdgesChangeInternal] = useEdgesState<Edge>([])
 
@@ -256,10 +293,10 @@ function StrategyFlowCanvas({
 							values: {
 								...(node.data.values ?? {}),
 								...updates,
-								},
+							},
 						},
 					}
-				}),
+				})
 			)
 		},
 		[setNodes],
@@ -286,8 +323,13 @@ function StrategyFlowCanvas({
 	)
 
 	const memoizedInitialNodes = React.useMemo(() => {
-		const templates = initialBlocks ?? defaultStrategyTemplates
-		return templates.map((template) => attachNodeCallbacks(createScratchBlockNode(template)))
+		if (!initialBlocks || initialBlocks.length === 0) {
+			return defaultStrategyTemplates.map((template) => attachNodeCallbacks(createScratchBlockNode(template)))
+		}
+		if (isFlowNodeArray(initialBlocks)) {
+			return initialBlocks.map((node) => attachNodeCallbacks(node))
+		}
+		return initialBlocks.map((template) => attachNodeCallbacks(createScratchBlockNode(template)))
 	}, [initialBlocks, attachNodeCallbacks])
 
 	const memoizedInitialEdges = React.useMemo(() => {
@@ -295,17 +337,30 @@ function StrategyFlowCanvas({
 		return sourceEdges.map(decorateEdge)
 	}, [initialEdges])
 
+	// Sync nodes when initialBlocks change, avoid redundant resets
 	React.useEffect(() => {
-		if (nodes.length === 0 && memoizedInitialNodes.length > 0) {
+		const nextSignature = signatureForNodes(memoizedInitialNodes)
+		if (nodesSignatureRef.current !== nextSignature) {
+			nodesSignatureRef.current = nextSignature
 			setNodes(memoizedInitialNodes)
 		}
-	}, [memoizedInitialNodes, nodes.length, setNodes])
+	}, [memoizedInitialNodes, setNodes])
 
 	React.useEffect(() => {
-		if (edges.length === 0 && memoizedInitialEdges.length > 0) {
+		nodesSignatureRef.current = signatureForNodes(nodes)
+	}, [nodes])
+
+	React.useEffect(() => {
+		const nextSignature = signatureForEdges(memoizedInitialEdges)
+		if (edgesSignatureRef.current !== nextSignature) {
+			edgesSignatureRef.current = nextSignature
 			setEdges(memoizedInitialEdges)
 		}
-	}, [memoizedInitialEdges, edges.length, setEdges])
+	}, [memoizedInitialEdges, setEdges])
+
+	React.useEffect(() => {
+		edgesSignatureRef.current = signatureForEdges(edges)
+	}, [edges])
 
 	React.useEffect(() => {
 		onNodesUpdate?.(nodes)
@@ -388,14 +443,14 @@ function StrategyFlowCanvas({
 	)
 
 	const handleNodesChange = React.useCallback(
-		(changes) => {
+		(changes: NodeChange[]) => {
 			onNodesChangeInternal(changes)
 		},
 		[onNodesChangeInternal],
 	)
 
 	const handleEdgesChange = React.useCallback(
-		(changes) => {
+		(changes: EdgeChange[]) => {
 			onEdgesChangeInternal(changes)
 		},
 		[onEdgesChangeInternal],

@@ -1,0 +1,34 @@
+{
+  "swap_100000_microalgo_into_usdc_on_tinyman_then_provide_single_sided_liquidity_using_all_available_usdc_in_the_usdc_usdt_pool": {
+    "description": "Swap 100000 microALGO into USDC on Tinyman, then Provide single-sided liquidity using all available USDC in the USDC/USDT pool",
+    "collateral_microalgo": 1500000,
+    "keeper_override": "",
+    "workflow_version": 1,
+    "app_escrow_id": 148607000,
+    "app_asa_id": 149571310,
+    "steps": [
+      {
+        "opcode": 1,
+        "target_app_id": 148607000,
+        "asset_in": 0,
+        "asset_out": 10458941,
+        "amount": 100000,
+        "slippage_bps": 100,
+        "extra_b64": "nD5zLL3ojZNiArwrhkTU52iaw/Qa3vExDexTWT1xYx8=",
+        "notes": "Tinyman ALGO/USDC swap escrow address",
+        "name": "swap_algo_usdc"
+      },
+      {
+        "opcode": 2,
+        "target_app_id": 148607000,
+        "asset_in": 10458941,
+        "asset_out": 67396430,
+        "amount": 0,
+        "slippage_bps": 100,
+        "extra_b64": "86f2pITw6wQPCX0xJ2Dp4uNwaud9kZ/1xXnsdA2/5mw=",
+        "notes": "Tinyman USDC/USDT pool escrow address",
+        "name": "provide_usdc_single_sided"
+      }
+    ]
+  }
+}

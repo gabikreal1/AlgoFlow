@@ -1,0 +1,23 @@
+{
+  "tinyman": {
+    "app_id": 148607000,
+    "usdc_usdt_pool": {
+      "pool_escrow": "6OT7NJEE6DVQIDYJPUYSOYHJ4LRXA2XHPWIZ75OFPHWHIDN74ZWHBOPVR4",
+      "pool_asset_id": 149571310,
+      "swap_escrow": "86W3X5HE2ETZN4NO27CFB7K6A2B7TJJ3UPTPV3PZVGLATOQUP3JQIB5NXU"
+    },
+    "algo_usdc_pool": {
+      "swap_escrow": "TQ7HGLF55CGZGYQCXQVYMRGU45UJVQ7UDLPPCMIN5RJVSPLRMMPUO26L2M"
+    }
+  },
+  "assets": {
+    "USDC": 10458941,
+    "USDT": 67396430,
+    "USDC_USDT_POOL": 149571310
+  },
+  "asset_decimals": {
+    "ALGO": 6,
+    "USDC": 6,
+    "USDT": 6
+  }
+}

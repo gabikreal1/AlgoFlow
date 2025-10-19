@@ -10,6 +10,9 @@ import { Avatar } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Send, Sparkles, Code, Copy, Check, Plus, Eye } from "lucide-react"
 import { cn } from "@/lib/utils"
+import type { Node, Edge } from "reactflow"
+import type { ScratchBlockNodeData } from "@/components/scratch-block-node"
+import { flowToParserJSON, parserJSONToFlow, type ParserStrategyJSON } from "@/lib/strategy-json-converter"
 
 interface Message {
   id: string
@@ -19,9 +22,16 @@ interface Message {
   code?: string
   actions?: { label: string; icon: React.ReactNode }[]
   context?: { label: string; value: string }[]
+  diagramJson?: ParserStrategyJSON | null
 }
 
-export function CursorChat() {
+interface CursorChatProps {
+  flowNodes?: Node<ScratchBlockNodeData>[]
+  flowEdges?: Edge[]
+  onDiagramUpdate?: (nodes: Node<ScratchBlockNodeData>[], edges: Edge[]) => void
+}
+
+export function CursorChat({ flowNodes = [], flowEdges = [], onDiagramUpdate }: CursorChatProps) {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "1",
@@ -44,12 +54,18 @@ export function CursorChat() {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
+    // Scroll to bottom when messages change
     if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+      const scrollViewport = scrollRef.current.querySelector('[data-radix-scroll-area-viewport]')
+      if (scrollViewport) {
+        scrollViewport.scrollTop = scrollViewport.scrollHeight
+      } else {
+        scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+      }
     }
-  }, [messages])
+  }, [messages, isTyping])
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!input.trim()) return
 
     const userMessage: Message = {
@@ -60,36 +76,75 @@ export function CursorChat() {
     }
 
     setMessages((prev) => [...prev, userMessage])
+    const userInput = input
     setInput("")
     setIsTyping(true)
 
-    // Simulate AI response
-    setTimeout(() => {
+    try {
+      // Convert current flow to parser JSON
+      const currentDiagram = flowNodes.length > 0 
+        ? flowToParserJSON(flowNodes, flowEdges)
+        : null
+
+      // Call the agent API
+      const response = await fetch("/api/agent", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          userInput,
+          diagramJson: currentDiagram,
+          registryJson: null, // Will use default registry
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error(`API error: ${response.statusText}`)
+      }
+
+      const data = await response.json()
+
+      // Create AI message
       const aiMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: "assistant",
-        content: "I'll help you with that. Let me create a transaction flow for you.",
+        content: data.commentary || "I've processed your request.",
         timestamp: new Date(),
-        code: `// Example transaction code
-const tx = await contract.swapExactTokensForTokens(
-  amountIn,
-  amountOutMin,
-  path,
-  to,
-  deadline
-);`,
-        context: [
-          { label: "Tokens", value: "ETH→USDC" },
-          { label: "Contract", value: "UniswapV3" },
-        ],
-        actions: [
-          { label: "Preview transaction", icon: <Eye className="h-3 w-3" /> },
-          { label: "Add to flow", icon: <Plus className="h-3 w-3" /> },
-        ],
+        diagramJson: data.diagram_json,
       }
+
+      // If we have a new diagram, update the flow
+      if (data.diagram_json && onDiagramUpdate) {
+        const { nodes, edges } = parserJSONToFlow(data.diagram_json)
+        onDiagramUpdate(nodes, edges)
+
+        aiMessage.actions = [
+          { label: "Strategy updated", icon: <Check className="h-3 w-3" /> },
+        ]
+        aiMessage.context = [
+          { label: "Blocks", value: String(nodes.length) },
+          { label: "Network", value: data.diagram_json.network },
+        ]
+      } else if (!data.diagram_json && data.commentary) {
+        aiMessage.context = [
+          { label: "Status", value: "No diagram changes" },
+        ]
+      }
+
       setMessages((prev) => [...prev, aiMessage])
+    } catch (error) {
+      console.error("Agent error:", error)
+      const errorMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        content: `I encountered an error: ${error instanceof Error ? error.message : "Unknown error"}. Please try again.`,
+        timestamp: new Date(),
+      }
+      setMessages((prev) => [...prev, errorMessage])
+    } finally {
       setIsTyping(false)
-    }, 1500)
+    }
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -106,9 +161,9 @@ const tx = await contract.swapExactTokensForTokens(
   }
 
   return (
-    <div className="h-full flex flex-col bg-card">
+    <div className="h-full flex flex-col bg-card overflow-hidden">
       {/* Header */}
-      <div className="p-4 border-b border-border">
+      <div className="flex-shrink-0 p-4 border-b border-border">
         <div className="flex items-center gap-3">
           <div className="relative">
             <Avatar className="h-9 w-9 bg-primary/20 border border-primary/30">
@@ -129,7 +184,8 @@ const tx = await contract.swapExactTokensForTokens(
       </div>
 
       {/* Messages */}
-      <ScrollArea className="flex-1 p-4" ref={scrollRef}>
+      <ScrollArea className="flex-1 min-h-0">
+        <div className="p-4">
         <div className="space-y-4">
           {messages.map((message) => (
             <div
@@ -242,10 +298,11 @@ const tx = await contract.swapExactTokensForTokens(
             </div>
           )}
         </div>
+        </div>
       </ScrollArea>
 
       {/* Input Area */}
-      <div className="p-4 border-t border-border">
+      <div className="flex-shrink-0 p-4 border-t border-border">
         <div className="relative">
           <Textarea
             ref={textareaRef}

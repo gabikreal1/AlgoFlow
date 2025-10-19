@@ -1,0 +1,33 @@
+{
+  "strategy_name": "Simple Swap Strategy",
+  "network": "Algorand",
+  "version": "1.0",
+  "stages": {
+    "entry": [
+      {
+        "id": "swap-1",
+        "type": "BLOCK",
+        "desc": "Swap USDC to ALGO",
+        "actions": [
+          {
+            "protocol": "Tinyman",
+            "op": "SWAP",
+            "params": {
+              "from": "USDC",
+              "to": "ALGO",
+              "amount_in": 100,
+              "amount_unit": "human"
+            }
+          }
+        ],
+        "condition": {
+          "type": "NONE",
+          "params": {}
+        }
+      }
+    ],
+    "manage": [],
+    "exit": []
+  },
+  "connections": []
+}

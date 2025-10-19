@@ -1,0 +1,68 @@
+{
+  "strategy_name": "Tinyman Workflow",
+  "network": "Algorand",
+  "version": "1.0",
+  "stages": {
+    "entry": [
+      {
+        "id": "block-swap-usdt",
+        "type": "BLOCK",
+        "desc": "Swap 1 ALGO to USDT via Tinyman",
+        "actions": [
+          {
+            "protocol": "Tinyman",
+            "op": "SWAP",
+            "params": {
+              "from": "ALGO",
+              "from_token": "ALGO",
+              "asset_in": "ALGO",
+              "to": "USDT",
+              "to_token": "USDT",
+              "asset_out": "USDT",
+              "amount_in": 1,
+              "amount": 1,
+              "amount_unit": "human"
+            }
+          }
+        ],
+        "condition": {
+          "type": "NONE",
+          "params": {}
+        }
+      },
+      {
+        "id": "block-lp",
+        "type": "BLOCK",
+        "desc": "Provide liquidity to USDC/USDT",
+        "actions": [
+          {
+            "protocol": "Tinyman",
+            "op": "PROVIDE_LIQUIDITY",
+            "params": {
+              "token_a": "USDC",
+              "token_b": "USDT",
+              "amount_a": 0,
+              "amount_b": 0,
+              "amount_a_human": 0,
+              "amount_b_human": 0,
+              "slippage_bps": 50,
+              "pool": "USDC-USDT"
+            }
+          }
+        ],
+        "condition": {
+          "type": "NONE",
+          "params": {}
+        }
+      }
+    ],
+    "manage": [],
+    "exit": []
+  },
+  "connections": [
+    {
+      "from": "block-swap-usdt",
+      "to": "block-lp"
+    }
+  ]
+}
