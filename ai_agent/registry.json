@@ -1,0 +1,19 @@
+{
+  "network": "algorand-mainnet",
+  "assets": {
+    "ALGO": 0,
+    "USDC": 31566704,
+    "OPUL": 287867876
+  },
+  "pools": {
+    "Pact": {
+      "ALGO/USDC": {
+        "pool_app_id": 2757488616,
+        "assets": {
+          "base": "ALGO",
+          "quote": "USDC"
+        }
+      }
+    }
+  }
+}
