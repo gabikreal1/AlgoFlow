@@ -28,6 +28,32 @@ AlgoFlow is an end-to-end platform that enables users to create, manage, and aut
 
 ---
 
+
+## UI Screenshots
+<img width="1919" height="1079" alt="image" src="https://github.com/user-attachments/assets/4f05c7dc-c98d-4d4d-9125-bea4bd4527f2" />
+
+<img width="1919" height="1079" alt="image" src="https://github.com/user-attachments/assets/7b1e3f23-5b11-4936-b164-a95946f4e88c" />
+Front-End Visuals
+
+Canvas (defi-strategy-flow.tsx) mirrors a stage-based storyboard: left “markers” define Entry/Manage/Exit lanes, center nodes render action cards (swap/liquidity) with palette colors, right mini-map ensures orientation in large flows.
+Execute modal in page.tsx uses tiered cards: readiness badge, Tinyman metadata grid, per-step accordions, wallet panel, and raw payload/txn viewers so builders can audit every detail before signing.
+Palette + inspector (component-palette.tsx, scratch-block-node.tsx) keep configuration inline—action presets expose the same fields the backend expects, reducing context switching and mismatched params.
+Toasts/spinners and the “Simulate Strategy” affordance match the Algorand purple/orange accent scheme, keeping state transitions obvious while aligning with Tinyman brand cues.
+
+## Smart Contracts
+Contract Architecture
+
+Intent storage app (contract.py) owns custodial state: create stores owner/keeper defaults, configure sets keeper + collateral thresholds, register_intent boxes the ABI-encoded workflow and enforces collateral, update_intent_status + withdraw_intent manage lifecycle and payouts, global box numbering via g_next_intent_key.
+Execution app (contract.py) reads boxed intent blobs, verifies hashes, validates optional triggers, then streams Tinyman steps through dispatch_workflow_step; helper subs handle swap/liquidity/transfer, on-demand ASA opt-ins, fee-splitting, and slippage guards.
+Shared primitives in common/ (ABI structs, constants, events, validation) guarantee consistent encoding: IntentRecord packs owner/collateral/workflow bytes, events.py emits logs, validation.py bounds fees and owners, opcodes.py maps action IDs for the dispatcher.
+Intent Lifecycle
+
+UI flow builds Tinyman plan → /api/workflow converts via buildTinymanWorkflow to the contract ABI (no private keys needed) → /api/transactions encodes register/execute groups, fetching g_next_intent from storage.
+Register call: collateral payment (if >0) funds storage, register_intent boxes workflow and logs creation, collateral sits custodially.
+Execute call: keeper or owner fetches export_intent, recomputes SHA256 plan hash, dispatcher executes Tinyman app calls; balances captured pre/post to infer outputs, optional trigger ensures oracle thresholds before actions.
+Completion: execution app logs success; storage update_intent_status flips state to Executing/Success/Failed; withdraw_intent lets owner or keeper reclaim collateral or fees based on final status.
+Together, visuals keep builders oriented (stage markers, color-coded actions, comprehensive modal), while the contracts provide a deterministic intent queue with collateral safety, slippage enforcement, and modular Tinyman execution—all wired for Algorand testnet IDs today but structured to swap registries for mainnet when ready.
+
 ## 🆕 New Features
 
 ### JSON Export/Import
