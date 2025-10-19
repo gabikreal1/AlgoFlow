@@ -19,9 +19,11 @@ from pyteal import (
     Len,
     MethodSignature,
     Not,
+    OnComplete,
     OnCompleteAction,
     Or,
     Reject,
+    Return,
     Router,
     ScratchVar,
     Seq,
@@ -37,7 +39,7 @@ from pyteal import (
     InnerTxn,
 )
 
-from ..common import abi_types, abi_utils, constants, events, opcodes, triggers
+from ..common import abi_types, abi_utils, constants, events, layout, opcodes, triggers
 from ..common.abi_types import WorkflowStep
 from ..common.expressions import (
     g_fee_split_bps_key,
@@ -46,6 +48,7 @@ from ..common.expressions import (
     g_storage_app_key,
     g_version_key,
 )
+from ..common.inner_txn import itxn_set_box_reference
 
 
 TEAL_VERSION = 8
@@ -157,7 +160,7 @@ def build_router() -> Router:
             storage_value.store(App.globalGet(storage_key)),
             Assert(storage_value.load() != Int(0)),
             intent_bytes.store(
-                read_intent_raw(storage_value.load(), intent_id.encode())
+                read_intent_raw(storage_value.load(), intent_id.get())
             ),
             intent_record.decode(intent_bytes.load()),
             intent_record.owner.store_into(owner_field),
@@ -261,7 +264,7 @@ def build_router() -> Router:
 
 
 @Subroutine(TealType.bytes)
-def read_intent_raw(storage_app_id: Expr, intent_id_bytes: Expr) -> Expr:
+def read_intent_raw(storage_app_id: Expr, intent_id_int: Expr) -> Expr:
     return Seq(
         InnerTxnBuilder.Begin(),
         InnerTxnBuilder.SetFields(
@@ -269,12 +272,15 @@ def read_intent_raw(storage_app_id: Expr, intent_id_bytes: Expr) -> Expr:
                 TxnField.type_enum: Int(6),
                 TxnField.application_id: storage_app_id,
                 TxnField.on_completion: Int(0),
-                TxnField.application_args: [READ_INTENT_RAW_SELECTOR, intent_id_bytes],
+                TxnField.application_args: [READ_INTENT_RAW_SELECTOR, Itob(intent_id_int)],
                 TxnField.fee: Int(0),
             }
         ),
+        itxn_set_box_reference(
+            storage_app_id, layout.intent_box_key(intent_id_int)
+        ),
         InnerTxnBuilder.Submit(),
-    extract_abi_return(InnerTxn.last_log()),
+        extract_abi_return(InnerTxn.last_log()),
     )
 
 
@@ -295,6 +301,9 @@ def call_update_status(storage_app_id: Expr, intent_id_int: Expr, status_code: E
                 ],
                 TxnField.fee: Int(0),
             }
+        ),
+        itxn_set_box_reference(
+            storage_app_id, layout.intent_box_key(intent_id_int)
         ),
         InnerTxnBuilder.Submit(),
     )
@@ -619,13 +628,36 @@ def validate_trigger(
 def approval_program(version: int = TEAL_VERSION) -> Expr:
     router = build_router()
     if hasattr(router, "approval_ast"):
-        return router.approval_ast.program_construction()
-    compiled = router.compile_program(version=version)
-    if isinstance(compiled, tuple):
-        return compiled[0]
-    if hasattr(compiled, "approval_program"):
-        return compiled.approval_program
-    return compiled
+        approval_expr = router.approval_ast.program_construction()
+    else:
+        compiled = router.compile_program(version=version)
+        if isinstance(compiled, tuple):
+            approval_expr = compiled[0]
+        elif hasattr(compiled, "approval_program"):
+            approval_expr = compiled.approval_program
+        else:
+            approval_expr = compiled
+
+    create_action = router.bare_call_actions.no_op.action
+    delete_action = router.bare_call_actions.delete_application.action
+    update_action = router.bare_call_actions.update_application.action
+
+    bare_dispatch = Cond(
+        [Txn.application_id() == Int(0), create_action],
+        [Txn.on_completion() == OnComplete.DeleteApplication, delete_action],
+        [Txn.on_completion() == OnComplete.UpdateApplication, update_action],
+        [Int(1), Reject()],
+    )
+
+    return Seq(
+        If(Txn.application_args.length() == Int(0)).Then(
+            Seq(
+                bare_dispatch,
+                Return(Int(1)),
+            )
+        ),
+        approval_expr,
+    )
 
 
 def clear_state_program(version: int = TEAL_VERSION) -> Expr:

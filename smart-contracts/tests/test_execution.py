@@ -27,9 +27,11 @@ from algo_flow_contracts.execution.contract import (  # type: ignore[import-not-
     amount_after_slippage,
     approval_program,
     build_router,
+    call_update_status,
     clear_state_program,
     dispatch_workflow_step,
     extract_pool_address,
+    read_intent_raw,
     provide_liquidity_step,
     swap_step,
     transfer_step,
@@ -48,7 +50,7 @@ def _compile(expr):
 
 
 def _compile_return(expr):
-    return _compile(Seq(Return(expr)))
+    return _compile(Seq(Pop(expr), Return(Int(1))))
 
 
 def test_router_methods_present():
@@ -259,6 +261,21 @@ def test_transfer_step_amount_zero_reads_balance():
     )
     lowered = teal.lower()
     assert "acct_params_get" in lowered or "asset_holding_get" in lowered
+
+
+def test_read_intent_raw_adds_box_ref():
+    teal = _compile_return(read_intent_raw(Int(99), Int(55)))
+    assert "itxn_field Boxes" in teal
+
+
+def test_call_update_status_adds_box_ref():
+    teal = _compile(
+        Seq(
+            call_update_status(Int(77), Int(11), Int(2), Bytes("detail")),
+            Approve(),
+        )
+    )
+    assert "itxn_field Boxes" in teal
 
 
 def test_extract_pool_address_enforces_length():
