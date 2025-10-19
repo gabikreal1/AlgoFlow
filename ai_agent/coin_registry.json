@@ -1,0 +1,87 @@
+{
+  "network": "algorand",
+  "timestamp": "2025-10-18T12:00:00Z",
+  "tokens": {
+    "ALGO": {
+      "symbol": "ALGO",
+      "name": "Algorand",
+      "asset_id": 0,
+      "decimals": 6,
+      "price_usd": 0.1823,
+      "price_btc": 0.00000269,
+      "source": "coingecko"
+    },
+    "USDC": {
+      "symbol": "USDC",
+      "name": "USD Coin",
+      "asset_id": 31566704,
+      "decimals": 6,
+      "price_usd": 1.0000,
+      "price_btc": 0.00001476,
+      "source": "coingecko"
+    },
+    "gALGO": {
+      "symbol": "gALGO",
+      "name": "Governance ALGO",
+      "asset_id": 793124631,
+      "decimals": 6,
+      "price_usd": 0.1825,
+      "price_btc": 0.00000270,
+      "source": "coingecko"
+    },
+    "BTC": {
+      "symbol": "BTC",
+      "name": "Bitcoin",
+      "asset_id": 999999,
+      "decimals": 8,
+      "price_usd": 67800.25,
+      "price_btc": 1.0,
+      "source": "coingecko"
+    },
+    "ETH": {
+      "symbol": "ETH",
+      "name": "Ethereum",
+      "asset_id": 888888,
+      "decimals": 18,
+      "price_usd": 2580.50,
+      "price_btc": 0.03805,
+      "source": "coingecko"
+    },
+    "SOL": {
+      "symbol": "SOL",
+      "name": "Solana",
+      "asset_id": 777777,
+      "decimals": 9,
+      "price_usd": 146.82,
+      "price_btc": 0.00217,
+      "source": "coingecko"
+    },
+    "OP": {
+      "symbol": "OP",
+      "name": "Optimism",
+      "asset_id": 666666,
+      "decimals": 18,
+      "price_usd": 2.47,
+      "price_btc": 0.000036,
+      "source": "coingecko"
+    },
+    "USDT": {
+      "symbol": "USDT",
+      "name": "Tether USD",
+      "asset_id": 555555,
+      "decimals": 6,
+      "price_usd": 1.0000,
+      "price_btc": 0.00001475,
+      "source": "coingecko"
+    },
+    "BNB": {
+      "symbol": "BNB",
+      "name": "Binance Coin",
+      "asset_id": 444444,
+      "decimals": 18,
+      "price_usd": 580.12,
+      "price_btc": 0.00857,
+      "source": "coingecko"
+    }
+  }
+}

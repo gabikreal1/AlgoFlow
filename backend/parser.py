@@ -18,7 +18,7 @@ POOLS  = _load("pools.json")
 # -------------------- registry helpers --------------------
 
 def _tok(network: str, sym: str) -> Dict[str, Any]:
-    t = TOKENS["networks"][network].get(sym)
+    t = TOKENS["networks"][network.lower()].get(sym)
     if not t: raise ValueError(f"Unknown token {sym} for {network}")
     return t
 
@@ -33,12 +33,12 @@ def _to_micro(amount: float, decimals: int, unit: str = "human") -> int:
     return int(round(float(amount) * (10 ** decimals)))
 
 def _proto(network: str, name: str) -> Dict[str, Any]:
-    p = PROTOS["networks"][network].get(name)
+    p = PROTOS["networks"][network.lower()].get(name)
     if not p: raise ValueError(f"Unknown protocol {name} for {network}")
     return p
 
 def _pool(network: str, proto: str, pair: str) -> Dict[str, Any]:
-    net = POOLS["networks"][network]
+    net = POOLS["networks"][network.lower()]
     prot = net.get(proto)
     if not prot:
         raise ValueError(f"No pools for protocol {proto} on {network}")
@@ -48,7 +48,7 @@ def _pool(network: str, proto: str, pair: str) -> Dict[str, Any]:
     return meta
 
 def _oracle(network: str, provider: str, pair: str) -> Optional[Dict[str, Any]]:
-    net = POOLS["networks"][network]
+    net = POOLS["networks"][network.lower()]
     oracles = net.get("oracles", {})
     prov = oracles.get(provider, {})
     return prov.get(pair)  # may be None
@@ -86,7 +86,7 @@ def _action_to_op(network: str, block_id: str, action: Dict[str, Any], cond_back
     if op == "SWAP":
         ai, ao = prm["asset_in"], prm["asset_out"]
         unit   = prm.get("amount_unit", "human")
-        amt    = _to_micro(prm["amount"], _decimals(network, ai), unit)
+        amt    = _to_micro(prm["amount_in"], _decimals(network, ai), unit)
         args.update({
             "asset_in": _asset_id(network, ai),
             "asset_out": _asset_id(network, ao),
@@ -150,9 +150,9 @@ def _block_to_logic_block(network: str, block: Dict[str, Any]) -> Dict[str, Any]
         args: Dict[str, Any] = {}
 
         if op == "SWAP":
-            ai, ao = prm["asset_in"], prm["asset_out"]
+            ai, ao = prm["from"], prm["to"]
             unit   = prm.get("amount_unit", "human")
-            amt    = _to_micro(prm["amount"], _decimals(network, ai), unit)
+            amt    = _to_micro(prm["amount_in"], _decimals(network, ai), unit)
             args.update({
                 "asset_in": _asset_id(network, ai),
                 "asset_out": _asset_id(network, ao),
@@ -285,25 +285,60 @@ def transform_front_to_back(front: Dict[str, Any], owner_address: str) -> Dict[s
 if __name__ == "__main__":
     # minimal front DSL shape with one block and multiple actions
     front = {
-        "strategy_name": "MVP Strategy",
-        "network": "algorand-mainnet",
-        "version": "1.0",
-        "stages": {
-            "entry": [
-                {
-                    "id": "b1",
-                    "type": "BLOCK",
-                    "condition": {"type": "NONE"},
-                    "actions": [
-                        {"protocol":"Pact","op":"SWAP","params":{"asset_in":"ALGO","asset_out":"USDC","amount":100,"amount_unit":"human"}},
-                        {"protocol":"Pact","op":"PROVIDE_LIQUIDITY","params":{"pool":"ALGO/USDC","slippage_bps":50}}
-                    ]
-                }
-            ],
-            "manage": [],
-            "exit": []
-        },
-        "connections":[]
-    }
+    "strategy_name": "TinyMan on Algorand: ETH to ALGO/USDC liquidity with price gate",
+    "network": "Algorand",
+    "version": "1.0",
+    "stages": {
+      "entry": [
+        {
+          "id": "b1",
+          "type": "BLOCK",
+          "desc": 'Null',
+          "actions": [
+            {
+              "protocol": "TINYMEN",
+              "op": "SWAP",
+              "params": {
+                "from": "ETH",
+                "to": "ALGO",
+                "amount_in": 2.5
+              }
+            },
+            {
+              "protocol": "TINYMEN",
+              "op": "SWAP",
+              "params": {
+                "from": "ETH",
+                "to": "USDC",
+                "amount_in": 2.5
+              }
+            },
+            {
+              "protocol": "TINYMEN",
+              "op": "PROVIDE_LIQUIDITY",
+              "params": {
+                "pool": "ALGO/USDC",
+                "token_a": "ALGO",
+                "token_b": "USDC",
+                "amount_a": 35395,
+                "amount_b": 6452.5
+              }
+            }
+          ],
+          "condition": {
+            "type": "ETH_PRICE_USD_GREATER_THAN",
+            "params": {
+              "threshold": 3000,
+              "token": "ETH",
+              "source": "registry"
+            }
+          }
+        }
+      ],
+      "manage": [],
+      "exit": []
+    },
+    "connections": []
+  }
     back = transform_front_to_back(front, owner_address="REPLACE_ADDR")
     print(json.dumps(back, indent=2))
