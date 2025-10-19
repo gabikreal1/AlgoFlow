@@ -1,203 +1,264 @@
 #!/usr/bin/env python3
-"""Utility to compile and deploy AlgoFlow contracts to an Algorand network."""
+"""Compile and deploy AlgoFlow smart contracts to the configured Algorand network."""
+
 from __future__ import annotations
 
 import argparse
 import base64
+import importlib
+import json
 import os
 import sys
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, Iterable, Tuple
+from typing import Callable, Dict, Tuple
 
 from algosdk import account, mnemonic, transaction
 from algosdk.v2client import algod
+load_dotenv_module = importlib.util.find_spec("dotenv")
+if load_dotenv_module is not None:
+	load_dotenv = importlib.import_module("dotenv").load_dotenv  # type: ignore[assignment]
+else:
+	def load_dotenv(*_args, **_kwargs):  # type: ignore[override]
+		return False
 from pyteal import Mode, OptimizeOptions, compileTeal
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
-    sys.path.insert(0, str(SRC_ROOT))
+	sys.path.insert(0, str(SRC_ROOT))
 
-from algo_flow_contracts.execution.contract import (  # type: ignore  # noqa: E402
-    approval_program as execution_approval,
-    clear_state_program as execution_clear,
-)
-from algo_flow_contracts.intent_storage.contract import (  # type: ignore  # noqa: E402
-    approval_program as storage_approval,
-    clear_state_program as storage_clear,
-)
+from compile_contracts import BUILD_DIR, CONTRACTS  # type: ignore  # noqa: E402
 
+ContractPair = Tuple[Callable[[], object], Callable[[], object]]
 
-@dataclass
-class ContractSpec:
-    approval_fn: Callable[[], object]
-    clear_fn: Callable[[], object]
-    global_schema: transaction.StateSchema
-    local_schema: transaction.StateSchema
-
-
-CONTRACTS: Dict[str, ContractSpec] = {
-    "execution": ContractSpec(
-        approval_fn=execution_approval,
-        clear_fn=execution_clear,
-        global_schema=transaction.StateSchema(num_uints=3, num_byte_slices=2),
-        local_schema=transaction.StateSchema(0, 0),
-    ),
-    "intent_storage": ContractSpec(
-        approval_fn=storage_approval,
-        clear_fn=storage_clear,
-        global_schema=transaction.StateSchema(num_uints=5, num_byte_slices=2),
-        local_schema=transaction.StateSchema(0, 0),
-    ),
+SCHEMA_CONFIG: Dict[str, Dict[str, int]] = {
+	"intent_storage": {
+		"global_uints": 5,
+		"global_bytes": 2,
+		"local_uints": 0,
+		"local_bytes": 0,
+	},
+	"execution": {
+		"global_uints": 3,
+		"global_bytes": 2,
+		"local_uints": 0,
+		"local_bytes": 0,
+	},
 }
 
-DEFAULT_HEADER_NAME = "X-Algo-API-Token"
-ENV_ADDRESS = "ALGOD_ADDRESS"
-ENV_TOKEN = "ALGOD_TOKEN"
-ENV_HEADER_NAME = "ALGOD_HEADER_NAME"
-ENV_HEADER_VALUE = "ALGOD_HEADER_VALUE"
-ENV_MNEMONIC = "ALGOD_ACCOUNT_MNEMONIC"
+APPROVAL_PAGE_SIZE = 2048
+MAX_EXTRA_PAGES = 2
 
 
-def get_algod_client() -> algod.AlgodClient:
-    address = os.environ.get(ENV_ADDRESS)
-    if not address:
-        raise SystemExit(f"Missing environment variable: {ENV_ADDRESS}")
-
-    token = os.environ.get(ENV_TOKEN, "")
-    header_name = os.environ.get(ENV_HEADER_NAME, DEFAULT_HEADER_NAME)
-    header_value = os.environ.get(ENV_HEADER_VALUE)
-
-    headers = {header_name: header_value} if header_value else {}
-    return algod.AlgodClient(token, address, headers)
-
-
-def get_account() -> Tuple[str, str]:
-    mnemonic_phrase = os.environ.get(ENV_MNEMONIC)
-    if not mnemonic_phrase:
-        raise SystemExit(f"Missing environment variable: {ENV_MNEMONIC}")
-    private_key = mnemonic.to_private_key(mnemonic_phrase)
-    address = account.address_from_private_key(private_key)
-    return address, private_key
+def compile_sources(name: str, pair: ContractPair, version: int, assemble: bool) -> Tuple[str, str]:
+	opts = OptimizeOptions(scratch_slots=True)
+	approval_fn, clear_fn = pair
+	approval_teal = compileTeal(
+		approval_fn(),
+		mode=Mode.Application,
+		version=version,
+		assembleConstants=assemble,
+		optimize=opts,
+	)
+	clear_teal = compileTeal(
+		clear_fn(),
+		mode=Mode.Application,
+		version=version,
+		assembleConstants=assemble,
+		optimize=opts,
+	)
+	return approval_teal, clear_teal
 
 
-def compile_program(client: algod.AlgodClient, teal_source: str) -> Tuple[bytes, str]:
-    response = client.compile(teal_source)
-    return base64.b64decode(response["result"]), response["hash"]
+def write_teal(name: str, version: int, approval: str, clear: str) -> Tuple[Path, Path]:
+	BUILD_DIR.mkdir(parents=True, exist_ok=True)
+	approval_path = BUILD_DIR / f"{name}_approval_v{version}.teal"
+	clear_path = BUILD_DIR / f"{name}_clear_v{version}.teal"
+	approval_path.write_text(approval)
+	clear_path.write_text(clear)
+	return approval_path, clear_path
 
 
-def build_programs(spec: ContractSpec, version: int, assemble: bool) -> Tuple[str, str]:
-    opts = OptimizeOptions(scratch_slots=True)
-    approval_teal = compileTeal(
-        spec.approval_fn(),
-        mode=Mode.Application,
-        version=version,
-        assembleConstants=assemble,
-        optimize=opts,
-    )
-    clear_teal = compileTeal(
-        spec.clear_fn(),
-        mode=Mode.Application,
-        version=version,
-        assembleConstants=assemble,
-        optimize=opts,
-    )
-    return approval_teal, clear_teal
+def algod_compile(client: algod.AlgodClient, teal_source: str) -> Tuple[bytes, str]:
+	compiled = client.compile(teal_source)
+	program_bytes = base64.b64decode(compiled["result"])
+	return program_bytes, compiled["hash"]
 
 
-def wait_for_confirmation(client: algod.AlgodClient, txid: str, timeout: int = 10) -> dict:
-    last_round = client.status().get("last-round", 0)
-    current_round = last_round
-    for _ in range(timeout):
-        pending = client.pending_transaction_info(txid)
-        if pending.get("confirmed-round", 0) > 0:
-            return pending
-        current_round += 1
-        client.status_after_block(current_round)
-    raise TimeoutError(f"Transaction {txid} not confirmed after {timeout} rounds")
+def extra_pages_required(program_length: int) -> int:
+	if program_length <= 0:
+		raise ValueError("Compiled approval program is empty")
+	total_pages = (program_length + APPROVAL_PAGE_SIZE - 1) // APPROVAL_PAGE_SIZE
+	extras = max(0, total_pages - 1)
+	if extras > MAX_EXTRA_PAGES:
+		raise ValueError(
+			f"Approval program length {program_length} exceeds supported extra page limit"
+		)
+	return extras
 
 
-def deploy_contract(client: algod.AlgodClient, sender: str, private_key: str, name: str, spec: ContractSpec, version: int, assemble: bool, extra_pages: int) -> None:
-    approval_teal, clear_teal = build_programs(spec, version, assemble)
-    approval_bytes, approval_hash = compile_program(client, approval_teal)
-    clear_bytes, _ = compile_program(client, clear_teal)
-
-    params = client.suggested_params()
-    txn = transaction.ApplicationCreateTxn(
-        sender=sender,
-        sp=params,
-        on_complete=transaction.OnComplete.NoOpOC,
-        approval_program=approval_bytes,
-        clear_program=clear_bytes,
-        global_schema=spec.global_schema,
-        local_schema=spec.local_schema,
-        extra_pages=extra_pages,
-        note=f"AlgoFlow {name} v{version}".encode(),
-    )
-
-    signed_txn = txn.sign(private_key)
-    txid = signed_txn.transaction.get_txid()
-    client.send_transaction(signed_txn)
-    confirmation = wait_for_confirmation(client, txid)
-    app_id = confirmation.get("application-index")
-
-    print(f"\n{name} contract deployed")
-    print(f"  App ID       : {app_id}")
-    print(f"  Approval hash: {approval_hash}")
-    print(f"  Teal length  : {len(approval_teal.encode())} bytes src, {len(approval_bytes)} bytes bytecode")
+def build_state_schemas(name: str) -> Tuple["transaction.StateSchema", "transaction.StateSchema"]:
+	if name not in SCHEMA_CONFIG:
+		raise ValueError(f"No schema configuration defined for contract '{name}'")
+	config = SCHEMA_CONFIG[name]
+	global_schema = transaction.StateSchema(config["global_uints"], config["global_bytes"])
+	local_schema = transaction.StateSchema(config["local_uints"], config["local_bytes"])
+	return global_schema, local_schema
 
 
-def parse_args(argv: Iterable[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Deploy AlgoFlow contracts")
-    parser.add_argument(
-        "--contract",
-        choices=sorted(CONTRACTS.keys()),
-        action="append",
-        help="Deploy only the selected contract(s); default deploys both",
-    )
-    parser.add_argument(
-        "--version",
-        type=int,
-        default=8,
-        help="TEAL version to compile against (default: 8)",
-    )
-    parser.add_argument(
-        "--no-assemble",
-        action="store_true",
-        help="Disable constant assembly during PyTeal compilation",
-    )
-    parser.add_argument(
-        "--extra-pages",
-        type=int,
-        default=0,
-        help="Additional program pages to allocate (default: 0)",
-    )
-    return parser.parse_args(list(argv))
+def write_deployment_record(name: str, record: Dict[str, object]) -> Path:
+	BUILD_DIR.mkdir(parents=True, exist_ok=True)
+	path = BUILD_DIR / f"{name}_deployment.json"
+	path.write_text(json.dumps(record, indent=2))
+	return path
 
 
-def main(argv: Iterable[str] | None = None) -> None:
-    args = parse_args(argv or sys.argv[1:])
-    client = get_algod_client()
-    sender, private_key = get_account()
+def parse_args() -> argparse.Namespace:
+	parser = argparse.ArgumentParser(description="Deploy AlgoFlow smart contracts")
+	parser.add_argument(
+		"--contract",
+		choices=sorted(CONTRACTS.keys()),
+		action="append",
+		help="Deploy only the selected contract(s). Defaults to all.",
+	)
+	parser.add_argument(
+		"--version",
+		type=int,
+		default=8,
+		help="TEAL version used for compilation (default: 8)",
+	)
+	parser.add_argument(
+		"--no-assemble",
+		action="store_true",
+		help="Disable PyTeal constant assembly before deployment.",
+	)
+	parser.add_argument(
+		"--algod-address",
+		default=os.getenv("ALGOD_ADDRESS", "http://127.0.0.1:4001"),
+		help="Algod RPC address (default: value from ALGOD_ADDRESS or local sandbox)",
+	)
+	parser.add_argument(
+		"--algod-token",
+		default=os.getenv("ALGOD_TOKEN", ""),
+		help="Algod API token (default: value from ALGOD_TOKEN or empty)",
+	)
+	parser.add_argument(
+		"--sender",
+		default=os.getenv("ALGOD_ACCOUNT_ADDRESS"),
+		help="Account address used to create applications.",
+	)
+	parser.add_argument(
+		"--mnemonic",
+		default=os.getenv("ALGOD_ACCOUNT_MNEMONIC"),
+		help="25-word mnemonic for the sender account.",
+	)
+	parser.add_argument(
+		"--note",
+		help="Optional note to attach to deployment transactions.",
+	)
+	parser.add_argument(
+		"--wait-rounds",
+		type=int,
+		default=10,
+		help="Number of rounds to wait for confirmation (default: 10)",
+	)
+	parser.add_argument(
+		"--dry-run",
+		action="store_true",
+		help="Compile programs and build transactions without submitting them.",
+	)
+	parser.add_argument(
+		"--skip-artifacts",
+		action="store_true",
+		help="Skip writing TEAL and deployment artifacts to disk.",
+	)
+	return parser.parse_args()
 
-    print(f"Deploying from address: {sender}")
-    status = client.status()
-    print(f"Connected to algod at round {status.get('last-round')}")
 
-    contract_names = args.contract if args.contract else list(CONTRACTS.keys())
-    for name in contract_names:
-        deploy_contract(
-            client=client,
-            sender=sender,
-            private_key=private_key,
-            name=name,
-            spec=CONTRACTS[name],
-            version=args.version,
-            assemble=not args.no_assemble,
-            extra_pages=args.extra_pages,
-        )
+def main() -> None:
+	load_dotenv(PROJECT_ROOT / ".env")
+	load_dotenv()
+	args = parse_args()
+
+	if not args.mnemonic:
+		raise SystemExit("Missing account mnemonic. Set ALGOD_ACCOUNT_MNEMONIC or use --mnemonic.")
+
+	private_key = mnemonic.to_private_key(args.mnemonic)
+	derived_sender = account.address_from_private_key(private_key)
+	sender = args.sender or derived_sender
+	if sender != derived_sender:
+		raise SystemExit("Provided sender address does not match mnemonic-derived address.")
+
+	client = algod.AlgodClient(args.algod_token, args.algod_address, headers={"User-Agent": "algosdk"})
+
+	assemble = not args.no_assemble
+	contract_names = args.contract if args.contract else sorted(CONTRACTS.keys())
+	note_bytes = args.note.encode("utf-8") if args.note else None
+
+	for name in contract_names:
+		pair = CONTRACTS[name]
+		approval_teal, clear_teal = compile_sources(name, pair, args.version, assemble)
+
+		if not args.skip_artifacts:
+			approval_path, clear_path = write_teal(name, args.version, approval_teal, clear_teal)
+			print(f"Wrote {approval_path}")
+			print(f"Wrote {clear_path}")
+
+		approval_bytes, approval_hash = algod_compile(client, approval_teal)
+		clear_bytes, clear_hash = algod_compile(client, clear_teal)
+		extras = extra_pages_required(len(approval_bytes))
+		global_schema, local_schema = build_state_schemas(name)
+
+		params = client.suggested_params()
+		params.flat_fee = True
+		params.fee = max(params.min_fee * (1 + extras), params.min_fee)
+
+		txn = transaction.ApplicationCreateTxn(
+			sender=sender,
+			sp=params,
+			on_complete=transaction.OnComplete.NoOpOC,
+			approval_program=approval_bytes,
+			clear_program=clear_bytes,
+			global_schema=global_schema,
+			local_schema=local_schema,
+			extra_pages=extras,
+			note=note_bytes,
+		)
+
+		txid = txn.get_txid()
+		print(f"Prepared deployment for '{name}' (txid={txid})")
+
+		if args.dry_run:
+			print("Dry-run enabled; skipping submission")
+			continue
+
+		signed = txn.sign(private_key)
+		client.send_transaction(signed)
+		pending = transaction.wait_for_confirmation(client, txid, args.wait_rounds)
+		app_id = pending.get("application-index")
+		if not isinstance(app_id, int):
+			raise RuntimeError("Algod response missing application-index")
+
+		print(f"Deployed '{name}' application-id={app_id} approval-hash={approval_hash}")
+
+		if args.skip_artifacts:
+			continue
+
+		record = {
+			"app_id": app_id,
+			"txid": txid,
+			"approval_hash": approval_hash,
+			"approval_length": len(approval_bytes),
+			"clear_hash": clear_hash,
+			"clear_length": len(clear_bytes),
+			"version": args.version,
+			"network": args.algod_address,
+			"sender": sender,
+		}
+		record_path = write_deployment_record(name, record)
+		print(f"Recorded deployment metadata at {record_path}")
 
 
 if __name__ == "__main__":
-    main()
+	main()
+

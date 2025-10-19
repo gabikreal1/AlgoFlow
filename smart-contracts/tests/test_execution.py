@@ -48,7 +48,7 @@ def _compile(expr):
 
 
 def _compile_return(expr):
-    return _compile(Seq(Return(expr)))
+    return _compile(Seq(Pop(expr), Return(Int(1))))
 
 
 def test_router_methods_present():
@@ -259,8 +259,6 @@ def test_transfer_step_amount_zero_reads_balance():
     )
     lowered = teal.lower()
     assert "acct_params_get" in lowered or "asset_holding_get" in lowered
-
-
 def test_extract_pool_address_enforces_length():
     teal = _compile(
         Seq(
@@ -322,6 +320,6 @@ def test_workflow_step_namedtuple_fields_are_stable():
 def test_router_method_signatures_stable():
     router = build_router()
     method_signatures = {method.get_signature() for method in router.methods}
-    assert "execute_intent(uint64,byte[],address)void" in method_signatures
+    assert "execute_intent(uint64,byte[],byte[],address)void" in method_signatures
     assert "configure(uint64,address,uint64)void" in method_signatures
 

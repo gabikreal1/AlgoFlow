@@ -15,7 +15,7 @@
    - `configure(address,uint64,uint64,uint64)void`: owner sets keeper defaults, minimum collateral, fee split, execution app id.
    - `register_intent(...)uint64`: validates collateral payment, stores the encoded workflow hash/blob, returns new intent id.
    - `update_intent_status(uint64,uint64,byte[])void`: enforces allowed lifecycle transitions and emits status events.
-   - `read_intent_raw(uint64)byte[]`: raw box loader used by the execution router via inner transactions.
+   - `read_intent_raw(uint64)byte[]`: raw box loader for clients that need to pre-fetch an encoded record before calling the execution router.
    - `withdraw_intent(uint64,address)uint64`: releases collateral on completion/failure.
 - `IntentRecord` (see `common/abi_types.py`) captures owner, keeper, workflow hash/blob, trigger config, escrow ids, ASA id, and collateral.
 
@@ -23,7 +23,7 @@
 - Reads intent boxes, validates hash + trigger guard, and dispatches workflow steps.
 - Methods:
    - `configure(uint64,address,uint64)void`: owner sets storage app id, default keeper, fee split bps.
-   - `execute_intent(uint64,byte[],address)void`: decodes workflow plan, executes each step, updates storage status, pays optional keeper.
+   - `execute_intent(uint64,byte[],byte[],address)void`: consumes a pre-fetched encoded intent record alongside an execution plan, executes each step, logs completion, and pays the optional keeper. Updating the storage contract status now happens in a separate client transaction.
 - Supported workflow opcodes (defined in `common/opcodes.py`):
    - `SWAP` → `swap_step`: inner app call into AMM, amount-after-slippage guard.
    - `PROVIDE_LIQUIDITY` → `provide_liquidity_step`: dual-asset provide, paired minimum enforced.
@@ -77,16 +77,6 @@ clear = compileTeal(clear_state_program(), mode=Mode.Application, version=8, ass
 - Deploy execution router, call `configure` with storage app id, keeper address, and fee split (keeper rewards handled off-chain for now).
 - Verify inner app IDs and box layout using AlgoExplorer or `goal app read`.
 - Keep the generated TEAL and bytecode under version control (or artifact storage) for auditability.
-
-#### `deploy_app.py`
-- Environment setup:
-   - `ALGOD_ADDRESS` – algod REST endpoint (`https://testnet-api.algonode.cloud` for public testnet).
-   - `ALGOD_TOKEN` – API token if required (empty for Algonode).
-   - `ALGOD_HEADER_NAME` / `ALGOD_HEADER_VALUE` – optional custom header pair (e.g. PureStake `X-API-Key`).
-   - `ALGOD_ACCOUNT_MNEMONIC` – 25-word mnemonic for the deployer account (fund it via the faucet when targeting TestNet).
-- Deploy both contracts: `python smart-contracts\deploy_app.py`
-- Deploy a single contract: `python smart-contracts\deploy_app.py --contract execution`
-- Flags: `--version` (TEAL version, default 8), `--no-assemble` (skip constant folding), `--extra-pages` (allocate additional program pages if ever needed).
 
 ### Tooling Tips
 - Use AlgoKit or Algorand Sandbox for fast compile/deploy/test cycles.

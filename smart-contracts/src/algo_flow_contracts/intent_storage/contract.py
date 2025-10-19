@@ -8,15 +8,19 @@ from pyteal import (
     Assert,
     BareCallActions,
     Bytes,
-    Itob,
+    Cond,
     Expr,
     Global,
     If,
     Int,
+    Itob,
     Len,
-    Pop,
+    OnComplete,
     OnCompleteAction,
     Or,
+    Pop,
+    Reject,
+    Return,
     Router,
     ScratchVar,
     Seq,
@@ -414,13 +418,36 @@ def send_payment(receiver: Expr, amount: Expr) -> Expr:
 def approval_program(version: int = TEAL_VERSION) -> Expr:
     router = build_router()
     if hasattr(router, "approval_ast"):
-        return router.approval_ast.program_construction()
-    compiled = router.compile_program(version=version)
-    if isinstance(compiled, tuple):
-        return compiled[0]
-    if hasattr(compiled, "approval_program"):
-        return compiled.approval_program
-    return compiled
+        approval_expr = router.approval_ast.program_construction()
+    else:
+        compiled = router.compile_program(version=version)
+        if isinstance(compiled, tuple):
+            approval_expr = compiled[0]
+        elif hasattr(compiled, "approval_program"):
+            approval_expr = compiled.approval_program
+        else:
+            approval_expr = compiled
+
+    create_action = router.bare_call_actions.no_op.action
+    delete_action = router.bare_call_actions.delete_application.action
+    update_action = router.bare_call_actions.update_application.action
+
+    bare_dispatch = Cond(
+        [Txn.application_id() == Int(0), create_action],
+        [Txn.on_completion() == OnComplete.DeleteApplication, delete_action],
+        [Txn.on_completion() == OnComplete.UpdateApplication, update_action],
+        [Int(1), Reject()],
+    )
+
+    return Seq(
+        If(Txn.application_args.length() == Int(0)).Then(
+            Seq(
+                bare_dispatch,
+                Return(Int(1)),
+            )
+        ),
+        approval_expr,
+    )
 
 
 def clear_state_program(version: int = TEAL_VERSION) -> Expr:
