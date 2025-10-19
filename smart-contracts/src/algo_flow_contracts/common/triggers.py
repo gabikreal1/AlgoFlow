@@ -1,0 +1,7 @@
+"""Trigger-related constants and helpers."""
+
+TRIGGER_TYPE_NONE = 0
+TRIGGER_TYPE_PRICE_THRESHOLD = 1
+
+COMPARATOR_GTE = 0
+COMPARATOR_LTE = 1
