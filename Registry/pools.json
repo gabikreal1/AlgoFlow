@@ -1,0 +1,43 @@
+{
+  "version": "1.0",
+  "networks": {
+    "algorand": {
+      "Pact": {
+        "ALGO/USDC": {
+          "pool_app_id": 2757488616,
+          "pool_address": null,
+          "assets": { "base": "ALGO", "quote": "USDC" }
+        }
+      },
+      "Tinyman": {
+        "ALGO/USDC": {
+          "note": "Tinyman V2 pools are LogicSig accounts derived from validator+pair; no fixed single app id.",
+          "assets": { "base": "ALGO", "quote": "USDC" }
+        }
+      },
+      "FolksFinance": {
+        "markets": {
+          "ALGO": { "market_app_id": 3184317016 },
+          "USDC": { "market_app_id": 3184324594 }
+        }
+      }
+    },
+    "algorand-testnet": {
+      "Pact": {
+        "ALGO/USDC": { "pool_app_id": null, "pool_address": null, "assets": { "base": "ALGO", "quote": "USDC" } }
+      },
+      "TinymanV2": {
+        "ALGO/USDC": {
+          "note": "Derive via validator 148607000 + pair.",
+          "assets": { "base": "ALGO", "quote": "USDC" }
+        }
+      },
+      "FolksFinance": {
+        "markets": {
+          "ALGO": { "market_app_id": null },
+          "USDC": { "market_app_id": null }
+        }
+      }
+    }
+  }
+}
