@@ -33,7 +33,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--collateral",
         type=int,
-        default=1_000_000,
+        default=100_000,
         help="Collateral placeholder used when rebuilding the workflow blob",
     )
     parser.add_argument(

@@ -17,7 +17,6 @@ from pyteal import (
     Int,
     Itob,
     Len,
-    MethodSignature,
     Not,
     OnComplete,
     OnCompleteAction,
@@ -39,7 +38,7 @@ from pyteal import (
     InnerTxn,
 )
 
-from ..common import abi_types, abi_utils, constants, events, layout, opcodes, triggers
+from ..common import abi_types, abi_utils, constants, events, opcodes, triggers
 from ..common.abi_types import WorkflowStep
 from ..common.expressions import (
     g_fee_split_bps_key,
@@ -48,15 +47,12 @@ from ..common.expressions import (
     g_storage_app_key,
     g_version_key,
 )
-from ..common.inner_txn import itxn_set_box_reference
 
 
 TEAL_VERSION = 8
 from ..common.validation import ensure_fee_bounds, ensure_owner
 
 ABI_RETURN_PREFIX = Bytes("base16", "151f7c75")
-READ_INTENT_RAW_SELECTOR = MethodSignature("read_intent_raw(uint64)byte[]")
-UPDATE_STATUS_SELECTOR = MethodSignature("update_intent_status(uint64,uint64,byte[])void")
 
 
 def build_router() -> Router:
@@ -112,6 +108,7 @@ def build_router() -> Router:
     @router.method(name="execute_intent")
     def execute_intent(
         intent_id: abi.Uint64,
+        intent_blob: abi.DynamicBytes,
         execution_plan: abi.DynamicBytes,
         fee_recipient: abi.Address,
     ) -> Expr:
@@ -159,9 +156,7 @@ def build_router() -> Router:
         return Seq(
             storage_value.store(App.globalGet(storage_key)),
             Assert(storage_value.load() != Int(0)),
-            intent_bytes.store(
-                read_intent_raw(storage_value.load(), intent_id.get())
-            ),
+            intent_bytes.store(intent_blob.get()),
             intent_record.decode(intent_bytes.load()),
             intent_record.owner.store_into(owner_field),
             intent_record.keeper.store_into(keeper_field),
@@ -205,12 +200,6 @@ def build_router() -> Router:
             ),
             hash_check.store(Sha256(execution_plan.get())),
             Assert(hash_check.load() == workflow_hash.get()),
-            call_update_status(
-                storage_value.load(),
-                intent_id.get(),
-                Int(constants.INTENT_STATUS_EXECUTING),
-                Bytes("exec_start"),
-            ),
             plan_array.decode(execution_plan.get()),
             plan_length.store(plan_array.length()),
             Assert(plan_length.load() > Int(0)),
@@ -246,12 +235,6 @@ def build_router() -> Router:
                     ),
                 )
             ),
-            call_update_status(
-                storage_value.load(),
-                intent_id.get(),
-                Int(constants.INTENT_STATUS_SUCCESS),
-                hash_check.load(),
-            ),
             events.log_intent_status(
                 intent_id.encode(),
                 Itob(Int(constants.INTENT_STATUS_SUCCESS)),
@@ -261,52 +244,6 @@ def build_router() -> Router:
         )
 
     return router
-
-
-@Subroutine(TealType.bytes)
-def read_intent_raw(storage_app_id: Expr, intent_id_int: Expr) -> Expr:
-    return Seq(
-        InnerTxnBuilder.Begin(),
-        InnerTxnBuilder.SetFields(
-            {
-                TxnField.type_enum: Int(6),
-                TxnField.application_id: storage_app_id,
-                TxnField.on_completion: Int(0),
-                TxnField.application_args: [READ_INTENT_RAW_SELECTOR, Itob(intent_id_int)],
-                TxnField.fee: Int(0),
-            }
-        ),
-        itxn_set_box_reference(
-            storage_app_id, layout.intent_box_key(intent_id_int)
-        ),
-        InnerTxnBuilder.Submit(),
-        extract_abi_return(InnerTxn.last_log()),
-    )
-
-
-@Subroutine(TealType.none)
-def call_update_status(storage_app_id: Expr, intent_id_int: Expr, status_code: Expr, detail: Expr) -> Expr:
-    return Seq(
-        InnerTxnBuilder.Begin(),
-        InnerTxnBuilder.SetFields(
-            {
-                TxnField.type_enum: Int(6),
-                TxnField.application_id: storage_app_id,
-                TxnField.on_completion: Int(0),
-                TxnField.application_args: [
-                    UPDATE_STATUS_SELECTOR,
-                    Itob(intent_id_int),
-                    Itob(status_code),
-                    detail,
-                ],
-                TxnField.fee: Int(0),
-            }
-        ),
-        itxn_set_box_reference(
-            storage_app_id, layout.intent_box_key(intent_id_int)
-        ),
-        InnerTxnBuilder.Submit(),
-    )
 
 
 @Subroutine(TealType.bytes)

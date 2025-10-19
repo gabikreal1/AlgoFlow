@@ -33,6 +33,9 @@ if str(SRC_ROOT) not in sys.path:
 
 STATIC_CONFIG_PATH = PROJECT_ROOT / "intent_resources.json"
 WORKFLOW_ARRAY_ABI = ABIType.from_string("(uint64,uint64,uint64,uint64,uint64,uint64,byte[])[]")
+INTENT_RECORD_ABI = ABIType.from_string(
+    "(address,uint64,byte[32],uint64,byte[],address,uint64,byte[],uint64,uint64)"
+)
 UINT64_ABI = ABIType.from_string("uint64")
 
 from algo_flow_contracts.common import abi_types, constants, opcodes  # noqa: E402
@@ -407,6 +410,12 @@ def run_execute(args: argparse.Namespace) -> None:
     client = algod_client(env_config)
     sender_addr, signer = get_signer_from_env(env_config)
 
+    intent_key = _intent_box_key_bytes(args.intent_id)
+    box_value = client.application_box_by_name(storage_app_id, intent_key)
+    intent_blob = base64.b64decode(box_value["value"])
+    record_tuple = INTENT_RECORD_ABI.decode(intent_blob)
+    stored_workflow_hash = bytes(record_tuple[2])
+
     resources = load_static_config()
     tinyman_cfg = resources.get("tinyman", {})
     pool_key = (args.pool or "usdc_usdt").strip().lower()
@@ -445,6 +454,9 @@ def run_execute(args: argparse.Namespace) -> None:
         app_asa_id=args.app_asa_id if args.app_asa_id is not None else pool_asset_id,
     )
 
+    if template.workflow_hash != stored_workflow_hash:
+        raise ValueError("Execution plan does not match stored workflow hash for this intent")
+
     composer = AtomicTransactionComposer()
     base_sp = client.suggested_params()
     call_sp = copy.copy(base_sp)
@@ -471,11 +483,10 @@ def run_execute(args: argparse.Namespace) -> None:
         signer=signer,
         method_args=[
             args.intent_id,
+            intent_blob,
             template.workflow_blob,
             args.fee_recipient or sender_addr,
         ],
-        boxes=[(storage_app_id, _intent_box_key_bytes(args.intent_id))],
-        foreign_apps=[storage_app_id],
     )
 
     result = composer.execute(client, 4)
@@ -491,7 +502,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         "--recipient",
         help="Address that receives the transfer when executed (default: pool escrow from static config)",
     )
-    demo.add_argument("--collateral", type=int, default=1_000_000, help="Collateral amount in microAlgos")
+    demo.add_argument("--collateral", type=int, default=100_000, help="Collateral amount in microAlgos")
     demo.add_argument("--transfer-amount", type=int, default=0, help="Transfer amount encoded in the workflow (0=all)")
     demo.add_argument(
         "--workflow",
@@ -559,7 +570,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         default=None,
         help="Execution app id authorized to execute intents (default: env EXECUTION_APP_ID)",
     )
-    execute.add_argument("--collateral", type=int, default=1_000_000, help="Collateral placeholder (not spent)")
+    execute.add_argument("--collateral", type=int, default=100_000, help="Collateral placeholder (not spent)")
     execute.add_argument(
         "--asset-id",
         type=int,
