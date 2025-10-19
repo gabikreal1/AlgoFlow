@@ -28,6 +28,7 @@ AlgoFlow is an end-to-end platform that enables users to create, manage, and aut
 
 ---
 ## Demo Link
+(click the thumbnail)
 [![Watch the demo](https://img.youtube.com/vi/l4DMMsyL_Hs/0.jpg)](https://youtu.be/l4DMMsyL_Hs)
 
 
