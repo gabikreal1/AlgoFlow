@@ -31,6 +31,11 @@ AlgoFlow is an end-to-end platform that enables users to create, manage, and aut
 (click the thumbnail)
 [![Watch the demo](https://img.youtube.com/vi/l4DMMsyL_Hs/0.jpg)](https://youtu.be/l4DMMsyL_Hs)
 
+## Links for deployed contracts
+Intent storage contract Explorer
+https://testnet.explorer.perawallet.app/application/748021465/
+Execution contract Explorer
+https://testnet.explorer.perawallet.app/application/748021463/
 
 ## UI Screenshots
 <img width="1919" height="1079" alt="image" src="https://github.com/user-attachments/assets/4f05c7dc-c98d-4d4d-9125-bea4bd4527f2" />
