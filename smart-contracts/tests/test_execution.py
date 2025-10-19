@@ -10,6 +10,7 @@ from pyteal import (
     Int,
     Mode,
     OptimizeOptions,
+    Pop,
     Return,
     Seq,
     compileTeal,
@@ -20,7 +21,7 @@ SRC_ROOT = os.path.join(os.path.dirname(TEST_ROOT), "src")
 if SRC_ROOT not in sys.path:  # pragma: no cover - import hook
     sys.path.append(SRC_ROOT)
 
-from algo_flow_contracts.common import constants, opcodes, triggers  # type: ignore[import-not-found]
+from algo_flow_contracts.common import opcodes, triggers  # type: ignore[import-not-found]
 from algo_flow_contracts.common.abi_types import WorkflowStep  # type: ignore[import-not-found]
 from algo_flow_contracts.execution.contract import (  # type: ignore[import-not-found]
     amount_after_slippage,
@@ -28,13 +29,12 @@ from algo_flow_contracts.execution.contract import (  # type: ignore[import-not-
     build_router,
     clear_state_program,
     dispatch_workflow_step,
+    extract_pool_address,
+    provide_liquidity_step,
+    swap_step,
+    transfer_step,
+    transfer_to_pool,
     validate_trigger,
-    execute_unstake,
-    execute_withdraw_liquidity,
-    execute_transfer,
-    maybe_pay_keeper,
-    execute_lend_supply,
-    execute_lend_withdraw,
 )
 
 
@@ -71,10 +71,11 @@ def test_execution_approval_contains_key_operations():
     assert "wideratio" in teal or ("mulw" in teal and "divmodw" in teal)
 
 
-def test_execution_approval_dispatches_reverse_operations():
+def test_execution_approval_dispatches_new_workflow_steps():
     teal = _compile(approval_program())
-    assert "callsub executewithdrawliquidity" in teal
-    assert "callsub executeunstake" in teal
+    assert "callsub swapstep" in teal
+    assert "callsub provideliquiditystep" in teal
+    assert "callsub transferstep" in teal
 
 
 def test_clear_state_compiles():
@@ -99,7 +100,7 @@ def test_dispatch_workflow_step_targets_all_subroutines():
                 Int(3),
                 Int(4),
                 Int(5),
-                Bytes(""),
+                Bytes("a" * 32),
                 Global.current_application_address(),
             ),
             dispatch_workflow_step(
@@ -109,17 +110,7 @@ def test_dispatch_workflow_step_targets_all_subroutines():
                 Int(3),
                 Int(4),
                 Int(5),
-                Bytes(""),
-                Global.current_application_address(),
-            ),
-            dispatch_workflow_step(
-                Int(opcodes.OPCODE_STAKE),
-                Int(1),
-                Int(2),
-                Int(3),
-                Int(4),
-                Int(5),
-                Bytes(""),
+                Bytes("b" * 32),
                 Global.current_application_address(),
             ),
             dispatch_workflow_step(
@@ -129,63 +120,15 @@ def test_dispatch_workflow_step_targets_all_subroutines():
                 Int(0),
                 Int(10),
                 Int(0),
-                Global.zero_address(),
-                Global.current_application_address(),
-            ),
-            dispatch_workflow_step(
-                Int(opcodes.OPCODE_LEND_SUPPLY),
-                Int(1),
-                Int(2),
-                Int(3),
-                Int(4),
-                Int(0),
-                Bytes(""),
-                Global.current_application_address(),
-            ),
-            dispatch_workflow_step(
-                Int(opcodes.OPCODE_LEND_WITHDRAW),
-                Int(1),
-                Int(2),
-                Int(3),
-                Int(4),
-                Int(0),
-                Bytes(""),
-                Global.current_application_address(),
-            ),
-            dispatch_workflow_step(
-                Int(opcodes.OPCODE_WITHDRAW_LIQUIDITY),
-                Int(2),
-                Int(3),
-                Int(4),
-                Int(5),
-                Int(6),
-                Bytes(""),
-                Global.current_application_address(),
-            ),
-            dispatch_workflow_step(
-                Int(opcodes.OPCODE_UNSTAKE),
-                Int(7),
-                Int(0),
-                Int(0),
-                Int(8),
-                Int(0),
-                Bytes(""),
+                Bytes("c" * 32),
                 Global.current_application_address(),
             ),
             Approve(),
         )
     )
-    for subroutine in (
-        "callsub executeswap",
-        "callsub executeprovideliquidity",
-        "callsub executestake",
-        "callsub executetransfer",
-        "callsub executelendsupply",
-        "callsub executelendwithdraw",
-        "callsub executewithdrawliquidity",
-        "callsub executeunstake",
-    ):
-        assert subroutine in teal
+    assert "callsub swapstep" in teal
+    assert "callsub provideliquiditystep" in teal
+    assert "callsub transferstep" in teal
 
 
 def test_dispatch_rejects_unknown_opcode():
@@ -207,98 +150,125 @@ def test_dispatch_rejects_unknown_opcode():
     assert "err" in teal
 
 
-def test_execute_transfer_contains_algo_and_asa_paths():
+def test_transfer_to_pool_emits_payment_and_asset_paths():
     teal = _compile(
         Seq(
-            execute_transfer(Int(0), Int(1_000_000), Global.zero_address()),
-            execute_transfer(Int(1234), Int(500_000), Global.zero_address()),
+            transfer_to_pool(Int(0), Int(10), Global.current_application_address()),
+            transfer_to_pool(Int(55), Int(20), Global.current_application_address()),
             Approve(),
         )
     )
-    assert "itxn_field TypeEnum" in teal
-    assert "itxn_field AssetAmount" in teal
+    assert "itxn_field Receiver" in teal
     assert "itxn_field XferAsset" in teal
 
 
-def test_maybe_pay_keeper_issues_payment_when_needed():
+def test_swap_step_uses_pool_address_and_inner_call():
     teal = _compile(
         Seq(
-            maybe_pay_keeper(Global.current_application_address(), Int(42)),
-            Approve(),
-        )
-    )
-    assert "itxn_submit" in teal or "inner_txn_submit" in teal
-
-def test_execute_lend_supply_contains_expected_fields():
-    teal = _compile(
-        Seq(
-            execute_lend_supply(
-                Int(1234),
-                Int(5678),
-                Int(99),
-                Bytes("extra"),
-                Global.current_application_address(),
-            ),
-            Approve(),
-        )
-    )
-    assert 'byte "lend_supply"' in teal
-    assert "itxn_field Assets" in teal
-
-
-def test_execute_lend_withdraw_contains_expected_fields():
-    teal = _compile(
-        Seq(
-            execute_lend_withdraw(
-                Int(1234),
-                Int(5678),
+            swap_step(
                 Int(77),
-                Bytes("extra"),
+                Int(5),
+                Int(6),
+                Int(1_000),
+                Int(50),
+                Bytes("s" * 32),
                 Global.current_application_address(),
             ),
             Approve(),
         )
     )
-    assert 'byte "lend_withdraw"' in teal
-    assert "itxn_field Assets" in teal
+    assert 'byte "swap"' in teal
+    assert "extract 0 32" in teal
+    assert "itxn_field Accounts" in teal
 
 
-def test_execute_withdraw_liquidity_contains_expected_fields():
+def test_provide_liquidity_step_uses_pool_address():
     teal = _compile(
         Seq(
-            execute_withdraw_liquidity(
-                Int(2000),
-                Int(111),
-                Int(222),
-                Int(333),
-                Int(444),
-                Bytes("payload"),
+            provide_liquidity_step(
+                Int(88),
+                Int(1),
+                Int(2),
+                Int(500),
+                Int(25),
+                Bytes("p" * 32),
                 Global.current_application_address(),
             ),
             Approve(),
         )
     )
-    assert 'byte "withdraw_liquidity"' in teal
-    assert "itxn_field Assets" in teal
-    assert "int 10000" in teal
-    assert "assert" in teal
+    assert 'byte "add_liquidity"' in teal
+    assert "extract 0 32" in teal
 
 
-def test_execute_unstake_contains_expected_fields():
+def test_transfer_step_tracks_deltas():
     teal = _compile(
         Seq(
-            execute_unstake(
-                Int(999),
-                Int(555),
-                Int(123),
-                Bytes("details"),
+            transfer_step(Int(9), Int(300), Bytes("t" * 32)),
+            Approve(),
+        )
+    )
+    assert "callsub transferto" in teal
+    assert "extract 0 32" in teal
+
+
+def test_swap_step_amount_zero_reads_balance():
+    teal = _compile(
+        Seq(
+            swap_step(
+                Int(77),
+                Int(5),
+                Int(6),
+                Int(0),
+                Int(50),
+                Bytes("s" * 32),
                 Global.current_application_address(),
             ),
             Approve(),
         )
     )
-    assert 'byte "unstake"' in teal
-    assert "itxn_field Assets" in teal
+    lowered = teal.lower()
+    assert "acct_params_get" in lowered or "asset_holding_get" in lowered
+
+
+def test_provide_liquidity_amount_zero_reads_balance():
+    teal = _compile(
+        Seq(
+            provide_liquidity_step(
+                Int(90),
+                Int(1),
+                Int(2),
+                Int(0),
+                Int(25),
+                Bytes("p" * 32),
+                Global.current_application_address(),
+            ),
+            Approve(),
+        )
+    )
+    lowered = teal.lower()
+    assert "acct_params_get" in lowered or "asset_holding_get" in lowered
+
+
+def test_transfer_step_amount_zero_reads_balance():
+    teal = _compile(
+        Seq(
+            transfer_step(Int(3), Int(0), Bytes("t" * 32)),
+            Approve(),
+        )
+    )
+    lowered = teal.lower()
+    assert "acct_params_get" in lowered or "asset_holding_get" in lowered
+
+
+def test_extract_pool_address_enforces_length():
+    teal = _compile(
+        Seq(
+            Pop(extract_pool_address(Bytes("x" * 32))),
+            Return(Int(1)),
+        )
+    )
+    assert "extract 0 32" in teal
     assert "assert" in teal
 
 
@@ -307,10 +277,10 @@ def test_validate_trigger_price_threshold_uses_oracle_lookup():
         Seq(
             validate_trigger(
                 Int(triggers.TRIGGER_TYPE_PRICE_THRESHOLD),
-                Int(7654321),
+                Int(7_654_321),
                 Bytes("price"),
                 Int(triggers.COMPARATOR_GTE),
-                Int(1500000),
+                Int(1_500_000),
             ),
             Approve(),
         )
@@ -324,10 +294,10 @@ def test_validate_trigger_supports_lte_comparator():
         Seq(
             validate_trigger(
                 Int(triggers.TRIGGER_TYPE_PRICE_THRESHOLD),
-                Int(1234567),
+                Int(1_234_567),
                 Bytes("price"),
                 Int(triggers.COMPARATOR_LTE),
-                Int(990000),
+                Int(990_000),
             ),
             Approve(),
         )

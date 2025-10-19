@@ -20,6 +20,8 @@ class IntentRecord(abi.NamedTuple):
     keeper: abi.Field[abi.Address]
     version: abi.Field[abi.Uint64]
     trigger_condition: abi.Field[abi.DynamicBytes]
+    app_escrow_id: abi.Field[abi.Uint64]
+    app_asa_id: abi.Field[abi.Uint64]
 
 
 class AuditLogEntry(abi.NamedTuple):

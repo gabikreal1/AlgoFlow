@@ -99,12 +99,14 @@ def build_router() -> Router:
 
     @router.method(name="register_intent")
     def register_intent(
-    workflow_hash: abi_types.StaticBytes32,
+        workflow_hash: abi_types.StaticBytes32,
         workflow_blob: abi.DynamicBytes,
         trigger_condition: abi.DynamicBytes,
         collateral_amount: abi.Uint64,
         keeper_override: abi.Address,
         workflow_version: abi.Uint64,
+        app_escrow_id: abi.Uint64,
+        app_asa_id: abi.Uint64,
         *,
         output: abi.Uint64,
     ) -> Expr:
@@ -115,6 +117,8 @@ def build_router() -> Router:
         keeper_addr = abi.Address()
         status_field = abi.Uint64()
         collateral_value = ScratchVar(TealType.uint64)
+        escrow_value = ScratchVar(TealType.uint64)
+        asa_value = ScratchVar(TealType.uint64)
 
         return Seq(
             validation.ensure_workflow_size(workflow_blob.get()),
@@ -130,6 +134,8 @@ def build_router() -> Router:
                 .Else(keeper_override.get())
             ),
             status_field.set(status.active()),
+            escrow_value.store(app_escrow_id.get()),
+            asa_value.store(app_asa_id.get()),
             record.set(
                 owner_addr,
                 collateral_amount,
@@ -139,6 +145,8 @@ def build_router() -> Router:
                 keeper_addr,
                 workflow_version,
                 trigger_condition,
+                app_escrow_id,
+                app_asa_id,
             ),
             encoded_intent.store(record.encode()),
             write_box(layout.intent_box_key(next_id.load()), encoded_intent.load()),
@@ -166,6 +174,8 @@ def build_router() -> Router:
         workflow_blob = abi.DynamicBytes()
         version_field = abi.Uint64()
         trigger_field = abi.DynamicBytes()
+        escrow_field = abi.Uint64()
+        asa_field = abi.Uint64()
         encoded = ScratchVar(TealType.bytes)
         new_record = abi_types.IntentRecord()
         current_status_int = ScratchVar(TealType.uint64)
@@ -192,6 +202,8 @@ def build_router() -> Router:
             stored_record.workflow_blob.store_into(workflow_blob),
             stored_record.version.store_into(version_field),
             stored_record.trigger_condition.store_into(trigger_field),
+            stored_record.app_escrow_id.store_into(escrow_field),
+            stored_record.app_asa_id.store_into(asa_field),
             current_status_int.store(current_status.get()),
             If(executor_param.hasValue())
             .Then(executor_addr.store(executor_param.value()))
@@ -221,6 +233,8 @@ def build_router() -> Router:
                 keeper_field,
                 version_field,
                 trigger_field,
+                escrow_field,
+                asa_field,
             ),
             encoded.store(new_record.encode()),
             write_box(key, encoded.load()),
@@ -271,6 +285,8 @@ def build_router() -> Router:
         workflow_blob = abi.DynamicBytes()
         version_field = abi.Uint64()
         trigger_field = abi.DynamicBytes()
+        escrow_field = abi.Uint64()
+        asa_field = abi.Uint64()
         new_record = abi_types.IntentRecord()
         encoded = ScratchVar(TealType.bytes)
         receiver_addr = abi.Address()
@@ -292,6 +308,8 @@ def build_router() -> Router:
             stored_record.workflow_blob.store_into(workflow_blob),
             stored_record.version.store_into(version_field),
             stored_record.trigger_condition.store_into(trigger_field),
+            stored_record.app_escrow_id.store_into(escrow_field),
+            stored_record.app_asa_id.store_into(asa_field),
             validation.ensure_owner(Txn.sender(), owner_field.get()),
             status_int.store(status_field.get()),
             Assert(
@@ -319,6 +337,8 @@ def build_router() -> Router:
                 keeper_field,
                 version_field,
                 trigger_field,
+                escrow_field,
+                asa_field,
             ),
             encoded.store(new_record.encode()),
             write_box(key, encoded.load()),

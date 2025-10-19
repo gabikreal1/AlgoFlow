@@ -1,10 +1,12 @@
 """Execution router contract for AlgoFlow intents."""
 
 from pyteal import (
+    AccountParam,
     And,
     App,
     Approve,
     Assert,
+    AssetHolding,
     BareCallActions,
     Bytes,
     Cond,
@@ -16,6 +18,7 @@ from pyteal import (
     Itob,
     Len,
     MethodSignature,
+    Not,
     OnCompleteAction,
     Or,
     Reject,
@@ -119,6 +122,8 @@ def build_router() -> Router:
         workflow_blob = abi.DynamicBytes()
         version_field = abi.Uint64()
         trigger_field = abi.DynamicBytes()
+        app_escrow_field = abi.Uint64()
+        app_asa_field = abi.Uint64()
         trigger_config = abi_types.TriggerConfig()
         trigger_type_field = abi.Uint64()
         trigger_oracle_app_field = abi.Uint64()
@@ -147,9 +152,6 @@ def build_router() -> Router:
         status_int = ScratchVar(TealType.uint64)
         hash_check = ScratchVar(TealType.bytes)
         collateral_field = abi.Uint64()
-        collateral_int = ScratchVar(TealType.uint64)
-        keeper_fee_int = ScratchVar(TealType.uint64)
-        keeper_account = abi.Address()
 
         return Seq(
             storage_value.store(App.globalGet(storage_key)),
@@ -165,9 +167,12 @@ def build_router() -> Router:
             intent_record.workflow_blob.store_into(workflow_blob),
             intent_record.version.store_into(version_field),
             intent_record.trigger_condition.store_into(trigger_field),
+            intent_record.app_escrow_id.store_into(app_escrow_field),
+            intent_record.app_asa_id.store_into(app_asa_field),
             intent_record.collateral.store_into(collateral_field),
             status_int.store(status_field.get()),
             Assert(status_int.load() == Int(constants.INTENT_STATUS_ACTIVE)),
+            opt_in_asset(app_asa_field.get()),
             If(Len(trigger_field.get()) == Int(0))
             .Then(
                 Seq(
@@ -206,6 +211,8 @@ def build_router() -> Router:
             plan_array.decode(execution_plan.get()),
             plan_length.store(plan_array.length()),
             Assert(plan_length.load() > Int(0)),
+            # Balance tracking: asset_id -> available_amount
+            # For first step, use plan amount; subsequent steps use actual output
             For(index.store(Int(0)), index.load() < plan_length.load(), index.store(index.load() + Int(1))).Do(
                 Seq(
                     plan_array[index.load()].store_into(step_tuple),
@@ -220,6 +227,8 @@ def build_router() -> Router:
                     target_int.store(abi_utils.uint64_to_int(target_field)),
                     asset_in_int.store(abi_utils.uint64_to_int(asset_in_field)),
                     asset_out_int.store(abi_utils.uint64_to_int(asset_out_field)),
+                    # Use plan amount for first step, or if amount is non-zero (explicit amount)
+                    # Otherwise steps inherit actual output from previous step via balance delta
                     amount_int.store(abi_utils.uint64_to_int(amount_field)),
                     slippage_int.store(abi_utils.uint64_to_int(slippage_field)),
                     dispatch_workflow_step(
@@ -234,19 +243,6 @@ def build_router() -> Router:
                     ),
                 )
             ),
-            collateral_int.store(abi_utils.uint64_to_int(collateral_field)),
-            keeper_fee_int.store(
-                WideRatio(
-                    [collateral_int.load(), App.globalGet(fee_key)],
-                    [Int(constants.KEEPER_FEE_SCALE)],
-                )
-            ),
-            keeper_account.set(
-                If(fee_recipient.get() == Global.zero_address())
-                .Then(keeper_field.get())
-                .Else(fee_recipient.get())
-            ),
-            maybe_pay_keeper(keeper_account.get(), keeper_fee_int.load()),
             call_update_status(
                 storage_value.load(),
                 intent_id.get(),
@@ -325,14 +321,12 @@ def dispatch_workflow_step(
     owner: Expr,
 ) -> Expr:
     return Cond(
-        [opcode == Int(opcodes.OPCODE_SWAP), execute_swap(target_app_id, asset_in, asset_out, amount, slippage_bps, extra_args, owner)],
-        [opcode == Int(opcodes.OPCODE_PROVIDE_LIQUIDITY), execute_provide_liquidity(target_app_id, asset_in, asset_out, amount, slippage_bps, extra_args, owner)],
-        [opcode == Int(opcodes.OPCODE_STAKE), execute_stake(target_app_id, asset_in, amount, extra_args, owner)],
-        [opcode == Int(opcodes.OPCODE_TRANSFER), execute_transfer(asset_in, amount, extra_args)],
-        [opcode == Int(opcodes.OPCODE_LEND_SUPPLY), execute_lend_supply(target_app_id, asset_in, amount, extra_args, owner)],
-        [opcode == Int(opcodes.OPCODE_LEND_WITHDRAW), execute_lend_withdraw(target_app_id, asset_out, amount, extra_args, owner)],
-        [opcode == Int(opcodes.OPCODE_WITHDRAW_LIQUIDITY), execute_withdraw_liquidity(target_app_id, asset_in, asset_out, amount, slippage_bps, extra_args, owner)],
-        [opcode == Int(opcodes.OPCODE_UNSTAKE), execute_unstake(target_app_id, asset_in, amount, extra_args, owner)],
+        [opcode == Int(opcodes.OPCODE_SWAP),
+         swap_step(target_app_id, asset_in, asset_out, amount, slippage_bps, extra_args, owner)],
+        [opcode == Int(opcodes.OPCODE_PROVIDE_LIQUIDITY),
+         provide_liquidity_step(target_app_id, asset_in, asset_out, amount, slippage_bps, extra_args, owner)],
+        [opcode == Int(opcodes.OPCODE_TRANSFER),
+         transfer_step(asset_in, amount, extra_args)],
         [Int(1), Reject()],
     )
 
@@ -346,124 +340,17 @@ def amount_after_slippage(amount: Expr, slippage_bps: Expr) -> Expr:
 
 
 @Subroutine(TealType.none)
-def execute_swap(
-    target_app_id: Expr,
-    asset_in: Expr,
-    asset_out: Expr,
-    amount: Expr,
-    slippage_bps: Expr,
-    extra_args: Expr,
-    owner: Expr,
-) -> Expr:
-    min_return = ScratchVar(TealType.uint64)
+def transfer_to_pool(asset_id: Expr, amount: Expr, destination: Expr) -> Expr:
     return Seq(
+        Assert(Len(destination) == Int(32)),
         Assert(amount > Int(0)),
-        Assert(slippage_bps <= Int(constants.KEEPER_FEE_SCALE)),
-        min_return.store(amount_after_slippage(amount, slippage_bps)),
-        InnerTxnBuilder.Begin(),
-        InnerTxnBuilder.SetFields(
-            {
-                TxnField.type_enum: Int(6),
-                TxnField.application_id: target_app_id,
-                TxnField.on_completion: Int(0),
-                TxnField.application_args: [
-                    Bytes("swap"),
-                    Itob(asset_in),
-                    Itob(asset_out),
-                    Itob(amount),
-                    Itob(min_return.load()),
-                    extra_args,
-                ],
-                TxnField.assets: [asset_in, asset_out],
-                TxnField.accounts: [owner],
-                TxnField.fee: Int(0),
-            }
-        ),
-        InnerTxnBuilder.Submit(),
-    )
-
-
-@Subroutine(TealType.none)
-def execute_provide_liquidity(
-    target_app_id: Expr,
-    asset_a: Expr,
-    asset_b: Expr,
-    amount_a: Expr,
-    slippage_bps: Expr,
-    extra_args: Expr,
-    owner: Expr,
-) -> Expr:
-    paired_amount = ScratchVar(TealType.uint64)
-    return Seq(
-        Assert(amount_a > Int(0)),
-        Assert(slippage_bps <= Int(constants.KEEPER_FEE_SCALE)),
-        paired_amount.store(amount_after_slippage(amount_a, slippage_bps)),
-        InnerTxnBuilder.Begin(),
-        InnerTxnBuilder.SetFields(
-            {
-                TxnField.type_enum: Int(6),
-                TxnField.application_id: target_app_id,
-                TxnField.on_completion: Int(0),
-                TxnField.application_args: [
-                    Bytes("provide_liquidity"),
-                    Itob(asset_a),
-                    Itob(asset_b),
-                    Itob(amount_a),
-                    Itob(paired_amount.load()),
-                    extra_args,
-                ],
-                TxnField.assets: [asset_a, asset_b],
-                TxnField.accounts: [owner],
-                TxnField.fee: Int(0),
-            }
-        ),
-        InnerTxnBuilder.Submit(),
-    )
-
-
-@Subroutine(TealType.none)
-def execute_stake(
-    staking_app_id: Expr,
-    asset_id: Expr,
-    amount: Expr,
-    extra_args: Expr,
-    owner: Expr,
-) -> Expr:
-    return Seq(
-        Assert(amount > Int(0)),
-        InnerTxnBuilder.Begin(),
-        InnerTxnBuilder.SetFields(
-            {
-                TxnField.type_enum: Int(6),
-                TxnField.application_id: staking_app_id,
-                TxnField.on_completion: Int(0),
-                TxnField.application_args: [
-                    Bytes("stake"),
-                    Itob(asset_id),
-                    Itob(amount),
-                    extra_args,
-                ],
-                TxnField.assets: [asset_id],
-                TxnField.accounts: [owner],
-                TxnField.fee: Int(0),
-            }
-        ),
-        InnerTxnBuilder.Submit(),
-    )
-
-
-@Subroutine(TealType.none)
-def execute_transfer(asset_id: Expr, amount: Expr, recipient_bytes: Expr) -> Expr:
-    return Seq(
-        Assert(amount > Int(0)),
-        Assert(Len(recipient_bytes) == Int(32)),
         InnerTxnBuilder.Begin(),
         If(asset_id == Int(0))
         .Then(
             InnerTxnBuilder.SetFields(
                 {
                     TxnField.type_enum: Int(1),
-                    TxnField.receiver: recipient_bytes,
+                    TxnField.receiver: destination,
                     TxnField.amount: amount,
                     TxnField.fee: Int(0),
                 }
@@ -475,7 +362,7 @@ def execute_transfer(asset_id: Expr, amount: Expr, recipient_bytes: Expr) -> Exp
                     TxnField.type_enum: Int(4),
                     TxnField.xfer_asset: asset_id,
                     TxnField.asset_amount: amount,
-                    TxnField.asset_receiver: recipient_bytes,
+                    TxnField.asset_receiver: destination,
                     TxnField.fee: Int(0),
                 }
             )
@@ -484,21 +371,217 @@ def execute_transfer(asset_id: Expr, amount: Expr, recipient_bytes: Expr) -> Exp
     )
 
 
+def inner_app_call(
+    app_id: Expr,
+    args,
+    assets,
+    accounts,
+) -> Expr:
+    return Seq(
+        InnerTxnBuilder.Begin(),
+        InnerTxnBuilder.SetFields(
+            {
+                TxnField.type_enum: Int(6),
+                TxnField.application_id: app_id,
+                TxnField.on_completion: Int(0),
+                TxnField.application_args: args,
+                TxnField.assets: assets,
+                TxnField.accounts: accounts,
+                TxnField.fee: Int(0),
+            }
+        ),
+        InnerTxnBuilder.Submit(),
+    )
+
+
+def capture_balance(asset_id: Expr, slot: ScratchVar) -> Expr:
+    return slot.store(get_balance(asset_id))
+
+
+@Subroutine(TealType.uint64)
+def compute_delta(pre_value: Expr, post_value: Expr) -> Expr:
+    return post_value - pre_value
+
+
+@Subroutine(TealType.uint64)
+def resolve_amount(asset_id: Expr, requested_amount: Expr) -> Expr:
+    return If(requested_amount == Int(0)).Then(get_balance(asset_id)).Else(requested_amount)
+
+
 @Subroutine(TealType.none)
-def maybe_pay_keeper(recipient: Expr, amount: Expr) -> Expr:
-    return If(And(recipient != Global.zero_address(), amount > Int(0))).Then(
+def swap_step(
+    pool_app: Expr,
+    asset_in: Expr,
+    asset_out: Expr,
+    amount: Expr,
+    slippage_bps: Expr,
+    extra_args: Expr,
+    owner: Expr,
+) -> Expr:
+    """
+    Swap asset_in for asset_out.
+    If amount == 0, use entire balance of asset_in.
+    """
+    pre_out = ScratchVar(TealType.uint64)
+    post_out = ScratchVar(TealType.uint64)
+    delta_out = ScratchVar(TealType.uint64)
+    min_return = ScratchVar(TealType.uint64)
+    pool_addr = ScratchVar(TealType.bytes)
+    actual_amount = ScratchVar(TealType.uint64)
+    return Seq(
+        pool_addr.store(extract_pool_address(extra_args)),
+        actual_amount.store(resolve_amount(asset_in, amount)),
+        Assert(actual_amount.load() > Int(0)),
+        Assert(slippage_bps <= Int(constants.KEEPER_FEE_SCALE)),
+        opt_in_asset(asset_in),
+        opt_in_asset(asset_out),
+        capture_balance(asset_out, pre_out),
+        transfer_to_pool(asset_in, actual_amount.load(), pool_addr.load()),
+        min_return.store(amount_after_slippage(actual_amount.load(), slippage_bps)),
+        inner_app_call(
+            pool_app,
+            [
+                Bytes("swap"),
+                Itob(asset_in),
+                Itob(asset_out),
+                Itob(actual_amount.load()),
+                Itob(min_return.load()),
+            ],
+            [asset_in, asset_out],
+            [pool_addr.load(), owner],
+        ),
+        capture_balance(asset_out, post_out),
+        delta_out.store(compute_delta(pre_out.load(), post_out.load())),
+    )
+
+
+@Subroutine(TealType.none)
+def provide_liquidity_step(
+    pool_app: Expr,
+    asset_a: Expr,
+    asset_b: Expr,
+    amount_a: Expr,
+    slippage_bps: Expr,
+    extra_args: Expr,
+    owner: Expr,
+) -> Expr:
+    """
+    Provide liquidity with asset_a and asset_b.
+    If amount_a == 0, use entire balance of asset_a.
+    """
+    pre_b = ScratchVar(TealType.uint64)
+    post_b = ScratchVar(TealType.uint64)
+    delta_b = ScratchVar(TealType.uint64)
+    paired_amount = ScratchVar(TealType.uint64)
+    pool_addr = ScratchVar(TealType.bytes)
+    actual_amount = ScratchVar(TealType.uint64)
+    return Seq(
+        pool_addr.store(extract_pool_address(extra_args)),
+        actual_amount.store(resolve_amount(asset_a, amount_a)),
+        Assert(actual_amount.load() > Int(0)),
+        Assert(slippage_bps <= Int(constants.KEEPER_FEE_SCALE)),
+        opt_in_asset(asset_a),
+        opt_in_asset(asset_b),
+        capture_balance(asset_b, pre_b),
+        transfer_to_pool(asset_a, actual_amount.load(), pool_addr.load()),
+        paired_amount.store(amount_after_slippage(actual_amount.load(), slippage_bps)),
+        inner_app_call(
+            pool_app,
+            [
+                Bytes("add_liquidity"),
+                Itob(asset_a),
+                Itob(asset_b),
+                Itob(actual_amount.load()),
+                Itob(paired_amount.load()),
+            ],
+            [asset_a, asset_b],
+            [pool_addr.load(), owner],
+        ),
+        capture_balance(asset_b, post_b),
+        delta_b.store(compute_delta(pre_b.load(), post_b.load())),
+    )
+
+
+@Subroutine(TealType.none)
+def transfer_step(asset_id: Expr, amount: Expr, extra_args: Expr) -> Expr:
+    """
+    Transfer asset to recipient.
+    If amount == 0, transfer entire balance of asset_id.
+    """
+    pre_value = ScratchVar(TealType.uint64)
+    post_value = ScratchVar(TealType.uint64)
+    delta_value = ScratchVar(TealType.uint64)
+    recipient = ScratchVar(TealType.bytes)
+    actual_amount = ScratchVar(TealType.uint64)
+    return Seq(
+        recipient.store(extract_pool_address(extra_args)),
+        actual_amount.store(resolve_amount(asset_id, amount)),
+        Assert(actual_amount.load() > Int(0)),
+        opt_in_asset(asset_id),
+        capture_balance(asset_id, pre_value),
+        transfer_to_pool(asset_id, actual_amount.load(), recipient.load()),
+        capture_balance(asset_id, post_value),
+        delta_value.store(compute_delta(pre_value.load(), post_value.load())),
+    )
+
+
+@Subroutine(TealType.none)
+def opt_in_asset(asset_id: Expr) -> Expr:
+    holding = AssetHolding.balance(Global.current_application_address(), asset_id)
+    return If(asset_id != Int(0)).Then(
         Seq(
-            InnerTxnBuilder.Begin(),
-            InnerTxnBuilder.SetFields(
-                {
-                    TxnField.type_enum: Int(1),
-                    TxnField.receiver: recipient,
-                    TxnField.amount: amount,
-                    TxnField.fee: Int(0),
-                }
+            holding,
+            If(Not(holding.hasValue())).Then(
+                Seq(
+                    InnerTxnBuilder.Begin(),
+                    InnerTxnBuilder.SetFields(
+                        {
+                            TxnField.type_enum: Int(4),
+                            TxnField.xfer_asset: asset_id,
+                            TxnField.asset_amount: Int(0),
+                            TxnField.asset_receiver: Global.current_application_address(),
+                            TxnField.fee: Int(0),
+                        }
+                    ),
+                    InnerTxnBuilder.Submit(),
+                )
             ),
-            InnerTxnBuilder.Submit(),
         )
+    )
+
+
+@Subroutine(TealType.uint64)
+def get_balance(asset_id: Expr) -> Expr:
+    contract_address = Global.current_application_address()
+    balance_slot = ScratchVar(TealType.uint64)
+    algo_balance = AccountParam.balance(contract_address)
+    asset_balance = AssetHolding.balance(contract_address, asset_id)
+    return Seq(
+        If(asset_id == Int(0))
+        .Then(
+            Seq(
+                algo_balance,
+                Assert(algo_balance.hasValue()),
+                balance_slot.store(algo_balance.value()),
+            )
+        )
+        .Else(
+            Seq(
+                asset_balance,
+                If(asset_balance.hasValue())
+                .Then(balance_slot.store(asset_balance.value()))
+                .Else(balance_slot.store(Int(0))),
+            )
+        ),
+        balance_slot.load(),
+    )
+
+
+@Subroutine(TealType.bytes)
+def extract_pool_address(extra: Expr) -> Expr:
+    return Seq(
+        Assert(Len(extra) >= Int(32)),
+        Substring(extra, Int(0), Int(32)),
     )
 
 
@@ -530,137 +613,6 @@ def validate_trigger(
                 .Else(Assert(price_value.load() <= threshold)),
             )
         )
-    )
-
-
-@Subroutine(TealType.none)
-def execute_lend_supply(
-    lending_app_id: Expr,
-    asset_id: Expr,
-    amount: Expr,
-    extra_args: Expr,
-    owner: Expr,
-) -> Expr:
-    return Seq(
-        Assert(asset_id > Int(0)),
-        Assert(amount > Int(0)),
-        InnerTxnBuilder.Begin(),
-        InnerTxnBuilder.SetFields(
-            {
-                TxnField.type_enum: Int(6),
-                TxnField.application_id: lending_app_id,
-                TxnField.on_completion: Int(0),
-                TxnField.application_args: [
-                    Bytes("lend_supply"),
-                    Itob(asset_id),
-                    Itob(amount),
-                    extra_args,
-                ],
-                TxnField.assets: [asset_id],
-                TxnField.accounts: [owner],
-                TxnField.fee: Int(0),
-            }
-        ),
-        InnerTxnBuilder.Submit(),
-    )
-
-
-@Subroutine(TealType.none)
-def execute_lend_withdraw(
-    lending_app_id: Expr,
-    asset_id: Expr,
-    amount: Expr,
-    extra_args: Expr,
-    owner: Expr,
-) -> Expr:
-    return Seq(
-        Assert(asset_id > Int(0)),
-        Assert(amount > Int(0)),
-        InnerTxnBuilder.Begin(),
-        InnerTxnBuilder.SetFields(
-            {
-                TxnField.type_enum: Int(6),
-                TxnField.application_id: lending_app_id,
-                TxnField.on_completion: Int(0),
-                TxnField.application_args: [
-                    Bytes("lend_withdraw"),
-                    Itob(asset_id),
-                    Itob(amount),
-                    extra_args,
-                ],
-                TxnField.assets: [asset_id],
-                TxnField.accounts: [owner],
-                TxnField.fee: Int(0),
-            }
-        ),
-        InnerTxnBuilder.Submit(),
-    )
-
-
-@Subroutine(TealType.none)
-def execute_withdraw_liquidity(
-    target_app_id: Expr,
-    asset_a: Expr,
-    asset_b: Expr,
-    liquidity_amount: Expr,
-    slippage_bps: Expr,
-    extra_args: Expr,
-    owner: Expr,
-) -> Expr:
-    return Seq(
-        Assert(liquidity_amount > Int(0)),
-        Assert(slippage_bps <= Int(constants.KEEPER_FEE_SCALE)),
-        InnerTxnBuilder.Begin(),
-        InnerTxnBuilder.SetFields(
-            {
-                TxnField.type_enum: Int(6),
-                TxnField.application_id: target_app_id,
-                TxnField.on_completion: Int(0),
-                TxnField.application_args: [
-                    Bytes("withdraw_liquidity"),
-                    Itob(asset_a),
-                    Itob(asset_b),
-                    Itob(liquidity_amount),
-                    Itob(slippage_bps),
-                    extra_args,
-                ],
-                TxnField.assets: [asset_a, asset_b],
-                TxnField.accounts: [owner],
-                TxnField.fee: Int(0),
-            }
-        ),
-        InnerTxnBuilder.Submit(),
-    )
-
-
-@Subroutine(TealType.none)
-def execute_unstake(
-    staking_app_id: Expr,
-    asset_id: Expr,
-    amount: Expr,
-    extra_args: Expr,
-    owner: Expr,
-) -> Expr:
-    return Seq(
-        Assert(amount > Int(0)),
-        InnerTxnBuilder.Begin(),
-        InnerTxnBuilder.SetFields(
-            {
-                TxnField.type_enum: Int(6),
-                TxnField.application_id: staking_app_id,
-                TxnField.on_completion: Int(0),
-                TxnField.application_args: [
-                    Bytes("unstake"),
-                    Itob(asset_id),
-                    Itob(amount),
-                    extra_args,
-                ],
-                TxnField.assets: [asset_id],
-                TxnField.accounts: [owner],
-                TxnField.fee: Int(0),
-            }
-        ),
-        InnerTxnBuilder.Submit(),
     )
 
 
